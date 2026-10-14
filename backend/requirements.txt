@@ -1,0 +1,26 @@
+# Core Framework
+fastapi
+uvicorn[standard]
+
+# Data Validation & Configuration
+pydantic
+pydantic-settings
+python-dotenv
+
+# AI/ML Integration
+google-genai
+
+# Document Processing
+PyMuPDF
+Pillow
+
+# Excel Export
+openpyxl
+
+# File Upload
+python-multipart
+
+# Testing
+pytest
+pytest-asyncio
+httpx
