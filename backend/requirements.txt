@@ -9,6 +9,7 @@ python-dotenv
 
 # AI/ML Integration
 google-genai
+truststore  # Required for SSL with google-genai on Windows
 
 # Document Processing
 PyMuPDF
@@ -19,6 +20,7 @@ openpyxl
 
 # File Upload
 python-multipart
+python-magic-bin  # Windows-compatible magic number detection
 
 # Testing
 pytest

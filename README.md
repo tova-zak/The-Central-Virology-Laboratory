@@ -43,12 +43,19 @@ Automated extraction system for commitment forms from the Central Virology Labor
 
 ## Setup Instructions
 
-> 📝 **Note:** Detailed setup instructions will be added as part of TASK-002 and TASK-003.
+### System Requirements
 
-### Prerequisites
+**Backend:**
 - Python 3.10 or higher
+- pip (Python package manager)
+- Windows: truststore package (for SSL certificate validation)
+
+**Frontend:**
 - Node.js 18 or higher
-- Gemini API key (Free Tier)
+- npm (Node package manager)
+
+**API Access:**
+- Gemini API key (Free Tier) — obtain from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
 ### Quick Start
 
