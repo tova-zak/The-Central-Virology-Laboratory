@@ -21,6 +21,7 @@ import sys
 import time
 import asyncio
 import logging
+import pytest
 from pathlib import Path
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
@@ -39,22 +40,24 @@ sys.path.insert(0, str(backend_dir))
 # Ensure .env is loaded BEFORE importing any app modules
 from dotenv import load_dotenv
 env_path = backend_dir.parent / ".env"
+if not env_path.exists():
+    # Worktree doesn't have .env - look in main repo
+    env_path = backend_dir.parent.parent.parent / ".env"
+
 if env_path.exists():
     load_dotenv(env_path)
     logger.info(f"✅ Loaded .env from {env_path}")
 else:
-    logger.error(f"❌ .env not found at {env_path}")
-    sys.exit(1)
+    # Skip test collection if .env not available
+    pytest.skip(f"Skipping e2e test: .env not found at {env_path}", allow_module_level=True)
 
 # Verify critical env vars
 tesseract_cmd = os.getenv("TESSERACT_CMD")
 if not tesseract_cmd:
-    logger.error("❌ TESSERACT_CMD not found in .env")
-    sys.exit(1)
+    pytest.skip("Skipping e2e test: TESSERACT_CMD not found in .env", allow_module_level=True)
 
 if not Path(tesseract_cmd).exists():
-    logger.error(f"❌ Tesseract not found at: {tesseract_cmd}")
-    sys.exit(1)
+    pytest.skip(f"Skipping e2e test: Tesseract not found at {tesseract_cmd}", allow_module_level=True)
 
 logger.info(f"✅ Tesseract verified at: {tesseract_cmd}")
 
@@ -66,12 +69,10 @@ logger.info(f"HYBRID_ENGINE_ENABLED: {hybrid_enabled}")
 logger.info(f"DEMO_MODE: {demo_mode}")
 
 if not hybrid_enabled:
-    logger.error("❌ HYBRID_ENGINE_ENABLED must be true in .env")
-    sys.exit(1)
+    pytest.skip("Skipping e2e test: HYBRID_ENGINE_ENABLED must be true in .env", allow_module_level=True)
 
 if not demo_mode:
-    logger.error("❌ DEMO_MODE must be true in .env (no Gemini API calls)")
-    sys.exit(1)
+    pytest.skip("Skipping e2e test: DEMO_MODE must be true in .env (no Gemini API calls)", allow_module_level=True)
 
 # Now safe to import app modules
 from app.services.processing.background import get_processor, ProcessingStatus

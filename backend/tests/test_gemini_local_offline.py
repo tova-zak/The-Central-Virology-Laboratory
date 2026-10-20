@@ -119,6 +119,7 @@ def test_controlled_provider_errors(monkeypatch, caplog, status, message, code):
         extractor.extract(b"\x89PNGsynthetic", "synthetic_doc", 0)
     assert caught.value.code == code
     assert len(calls) == 1
+    assert caught.value.diagnostics["http_status"] == status
     assert "DO_NOT_LOG_PROVIDER_CONTENT" not in str(caught.value)
     assert "DO_NOT_LOG_PROVIDER_CONTENT" not in caplog.text
     assert "unit-test-not-a-real-credential" not in caplog.text
@@ -147,6 +148,108 @@ def test_timeout_is_sanitized(monkeypatch):
         extractor.extract(b"\x89PNGsynthetic", "synthetic_doc", 0)
     assert caught.value.code == "provider_timeout"
     assert "DO_NOT_LOG_PROVIDER_CONTENT" not in str(caught.value)
+
+
+@pytest.mark.parametrize("cause,code", [
+    (socket.gaierror(socket.EAI_NONAME, "DO_NOT_LOG_PROVIDER_CONTENT"), "dns_error"),
+    (ConnectionRefusedError(111, "DO_NOT_LOG_PROVIDER_CONTENT"), "connection_refused"),
+    (PermissionError(13, "DO_NOT_LOG_PROVIDER_CONTENT"), "network_access_denied"),
+])
+def test_nested_network_failures_keep_safe_cause_metadata(monkeypatch, caplog, cause, code):
+    def respond(request):
+        raise httpx.ConnectError("DO_NOT_LOG_PROVIDER_CONTENT", request=request) from cause
+    extractor = extractor_with_transport(monkeypatch, respond)
+    with pytest.raises(ExtractionError) as caught:
+        extractor.extract(b"\x89PNGsynthetic", "synthetic_doc", 0)
+    failure = caught.value
+    assert failure.code == code
+    assert failure.diagnostics["exception_types"] == ["ConnectError", type(cause).__name__]
+    assert failure.diagnostics["errno"] == cause.errno
+    assert "DO_NOT_LOG_PROVIDER_CONTENT" not in json.dumps(failure.diagnostics)
+    assert "DO_NOT_LOG_PROVIDER_CONTENT" not in caplog.text
+    assert code in caplog.text
+
+
+@pytest.mark.parametrize("kind,code", [
+    ("certificate", "tls_certificate_error"), ("tls", "tls_error"),
+    ("proxy", "proxy_error"), ("connect", "network_connection_failed"),
+])
+def test_tls_proxy_and_connection_errors_are_distinct(kind, code):
+    import ssl
+    error = httpx.ConnectError("DO_NOT_LOG_PROVIDER_CONTENT")
+    if kind == "certificate":
+        error.__cause__ = ssl.SSLCertVerificationError(1, "DO_NOT_LOG_PROVIDER_CONTENT")
+    elif kind == "tls":
+        error.__cause__ = ssl.SSLError(1, "DO_NOT_LOG_PROVIDER_CONTENT")
+    elif kind == "proxy":
+        error = httpx.ProxyError("DO_NOT_LOG_PROVIDER_CONTENT")
+    failure = adapter._provider_failure(error)
+    assert failure.code == code
+    assert failure.retryable is (kind == "connect")
+    assert "http_status" not in failure.diagnostics
+    assert "DO_NOT_LOG_PROVIDER_CONTENT" not in str(failure)
+
+
+@pytest.mark.parametrize("error_type,phase", [
+    (httpx.ConnectTimeout, "connect"), (httpx.ReadTimeout, "read"),
+    (httpx.WriteTimeout, "write"), (httpx.PoolTimeout, "pool"),
+])
+def test_timeout_phase_is_retained_without_exception_text(error_type, phase):
+    failure = adapter._provider_failure(error_type("DO_NOT_LOG_PROVIDER_CONTENT"))
+    assert failure.code == "provider_timeout"
+    assert failure.diagnostics["timeout_phase"] == phase
+    assert failure.diagnostics["timeout_layer"] == "httpx"
+
+
+@pytest.mark.parametrize("status,code", [
+    (400, "request_rejected"), (401, "invalid_credentials"), (403, "invalid_credentials"),
+    (404, "model_incompatible"), (429, "rate_limit"), (500, "provider_unavailable"),
+    (502, "provider_unavailable"), (503, "provider_unavailable"),
+])
+def test_http_status_is_not_lost(status, code):
+    response = httpx.Response(status, request=httpx.Request("POST", "https://synthetic.invalid/"))
+    failure = adapter._provider_failure(httpx.HTTPStatusError(
+        "DO_NOT_LOG_PROVIDER_CONTENT", request=response.request, response=response))
+    assert failure.code == code
+    assert failure.diagnostics["http_status"] == status
+    assert "DO_NOT_LOG_PROVIDER_CONTENT" not in json.dumps(failure.diagnostics)
+
+
+def test_original_transport_skipped_environment_proxy_and_default_client_honors_it(monkeypatch):
+    # Construct clients only: inspect selected transport; never send a request.
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://offline-user:offline-password@127.0.0.1:9")
+    url = httpx.URL("https://synthetic.invalid/")
+    with httpx.Client(transport=httpx.HTTPTransport()) as original:
+        assert original._transport_for_url(url) is original._transport
+    with httpx.Client() as corrected:
+        assert corrected._transport_for_url(url) is not corrected._transport
+    monkeypatch.setenv("NO_PROXY", "synthetic.invalid")
+    with httpx.Client() as excluded:
+        assert excluded._transport_for_url(url) is excluded._transport
+
+
+def test_adapter_keeps_verified_tls_timeouts_and_standard_proxy_routing(monkeypatch):
+    from unittest.mock import Mock
+    # No proxy URLs/credentials or document contents are logged.
+    original_client = httpx.Client
+    clients = []
+    def capture_client(*args, **kwargs):
+        clients.append(kwargs)
+        return original_client(*args, **kwargs)
+    monkeypatch.setattr(adapter.httpx, "Client", capture_client)
+    monkeypatch.setattr(adapter.genai, "Client", Mock(side_effect=RuntimeError("DO_NOT_LOG_PROVIDER_CONTENT")))
+    extractor = adapter.GeminiExtractor()
+    extractor.quota_manager = QuotaManager()
+    import ssl
+    assert extractor.ssl_context.check_hostname is True
+    assert extractor.ssl_context.verify_mode == ssl.CERT_REQUIRED
+    with pytest.raises(ExtractionError):
+        extractor.extract(b"\x89PNGsynthetic", "synthetic_doc", 0)
+    assert clients[0]["verify"] is extractor.ssl_context
+    assert clients[0]["timeout"] == 60.0
+    assert "transport" not in clients[0]
 
 
 def test_keys_use_selected_file_with_process_precedence(monkeypatch, caplog):
@@ -207,6 +310,83 @@ def test_background_retries_transient_failure_without_mock_substitution():
     processor._gemini_timeout_seconds = 5
     assert asyncio.run(processor._extract_with_retry(b"synthetic", "synthetic_doc", 0)) is expected
     assert processor._extractor.extract.call_count == 2
+
+
+def test_configured_page_deadline_covers_observed_212_second_extraction(monkeypatch):
+    from app.core.config import Settings, settings
+    from app.services.processing import background
+    from unittest.mock import Mock
+    monkeypatch.delenv("EXTRACTION_TIMEOUT_SECONDS", raising=False)
+    configured = Settings(_env_file=None)
+    assert configured.extraction_timeout_seconds == 300
+    assert configured.extraction_timeout_seconds > 212
+    monkeypatch.setattr(settings, "extraction_timeout_seconds", configured.extraction_timeout_seconds)
+    monkeypatch.setattr(background, "get_storage_backend", lambda: Mock())
+    processor = background.BackgroundProcessor()
+    assert processor._gemini_timeout_seconds == configured.extraction_timeout_seconds
+
+
+@pytest.mark.parametrize("seconds", [29, 601])
+def test_page_deadline_stays_bounded(seconds):
+    from app.core.config import Settings
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, extraction_timeout_seconds=seconds)
+
+
+@pytest.mark.parametrize("deadline,succeeds", [(90, False), (300, True)])
+def test_delayed_validated_response_is_only_rejected_by_old_deadline(monkeypatch, deadline, succeeds):
+    import asyncio
+    import time
+    from app.services.processing.background import BackgroundProcessor
+    # Validate an in-memory SDK response first, then delay its delivery at the
+    # provider boundary. Keep unrelated client/certificate setup out of scaled timing.
+    scale = 0.003
+    calls = []
+    def respond(request):
+        return httpx.Response(200, json={"candidates": [{"content": {
+            "parts": [{"text": json.dumps(payload())}], "role": "model"}, "finishReason": "STOP"}]})
+    extractor = extractor_with_transport(monkeypatch, respond)
+    validated_result = extractor.extract(b"\x89PNGsynthetic", "synthetic_doc", 0)
+    class DelayedDelivery:
+        def extract(self, **kwargs):
+            calls.append(1)
+            time.sleep(210.9 * scale)
+            return validated_result
+    processor = object.__new__(BackgroundProcessor)
+    processor._extractor = DelayedDelivery()
+    processor._max_retries = 2
+    processor._retry_delay = 0
+    processor._gemini_timeout_seconds = deadline * scale
+    if succeeds:
+        result = asyncio.run(processor._extract_with_retry(b"\x89PNGsynthetic", "synthetic_doc", 0))
+        assert result.fields["patient_first_name"] == "Synthetic"
+        record = processor._create_commitment_from_page(result, "synthetic_doc", 0)
+        assert record.patient_first_name.raw_value == "Synthetic"
+    else:
+        with pytest.raises(ExtractionError) as caught:
+            asyncio.run(processor._extract_with_retry(b"\x89PNGsynthetic", "synthetic_doc", 0))
+        assert caught.value.code == "provider_timeout"
+        assert caught.value.diagnostics["timeout_layer"] == "worker"
+        assert caught.value.diagnostics["timeout_seconds"] == deadline * scale
+        assert caught.value.diagnostics["attempt"] == 1
+        assert not caught.value.retryable
+    assert len(calls) == 1  # No overlapping/repeated request after a worker timeout.
+
+
+def test_httpx_timeout_diagnostics_reach_worker_unchanged(monkeypatch):
+    import asyncio
+    from app.services.processing.background import BackgroundProcessor
+    def respond(request):
+        raise httpx.ReadTimeout("DO_NOT_LOG_PROVIDER_CONTENT", request=request)
+    processor = object.__new__(BackgroundProcessor)
+    processor._extractor = extractor_with_transport(monkeypatch, respond)
+    processor._max_retries = 0
+    processor._retry_delay = 0
+    processor._gemini_timeout_seconds = 300
+    with pytest.raises(ExtractionError) as caught:
+        asyncio.run(processor._extract_with_retry(b"\x89PNGsynthetic", "synthetic_doc", 0))
+    assert caught.value.diagnostics["timeout_layer"] == "httpx"
+    assert caught.value.diagnostics["timeout_phase"] == "read"
 
 
 def test_real_adapter_results_keep_one_commitment_per_page(monkeypatch):

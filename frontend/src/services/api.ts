@@ -136,6 +136,18 @@ export interface DocumentInfo {
   document_id: string;
   filename: string;
   size_bytes: number;
+  page_count?: number;
+}
+
+export interface ProcessingProgress {
+  current: number;
+  total: number;
+  current_file: string | null;
+  page_current?: number;
+  page_total?: number;
+  pages_succeeded?: number;
+  pages_failed?: number;
+  last_error_code?: string | null;
 }
 
 export interface BatchResponse {
@@ -160,11 +172,7 @@ export interface BatchStatusResponse {
   processed_count?: number;
   error_count?: number;
   message?: string;
-  progress?: {
-    current: number;
-    total: number;
-    current_file: string | null;
-  };
+  progress?: ProcessingProgress;
 }
 
 export interface FieldUpdateRequest {

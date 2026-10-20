@@ -6,10 +6,12 @@
  * 
  * State Persistence: Uses URL params and localStorage to restore batch after refresh
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { UploadForm } from '../upload/UploadForm';
 import { ReviewScreenNew } from '../review/ReviewScreenNew';
 import { processBatch, getBatchStatus } from '../../services/api';
+import type { BatchStatusResponse, ProcessingProgress } from '../../services/api';
+import { decidePoll, POLL_INTERVAL_MS } from './pollingPolicy';
 import './WorkflowScreen.css';
 
 type WorkflowStage = 'upload' | 'processing' | 'review';
@@ -21,7 +23,8 @@ export const WorkflowScreen: React.FC = () => {
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ current: number; total: number; current_file: string | null } | null>(null);
+  const [progress, setProgress] = useState<ProcessingProgress | null>(null);
+  const pollRef = useRef<number | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -97,48 +100,59 @@ export const WorkflowScreen: React.FC = () => {
   };
 
   const startPolling = (batchId: string) => {
+    // Never run two pollers for the same screen.
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+    }
+    const startedAt = Date.now();
+    let consecutiveErrors = 0;
+    let inFlight = false;
+
+    const stop = () => {
+      window.clearInterval(interval);
+      pollRef.current = null;
+      setPollingInterval(null);
+      setProcessing(false);
+    };
+
     const interval = window.setInterval(async () => {
+      if (inFlight) {
+        return; // previous request still running; do not stack requests
+      }
+      inFlight = true;
+      let snapshot: BatchStatusResponse | null = null;
       try {
-        const status = await getBatchStatus(batchId);
-        
-        // Update progress
-        if (status.progress) {
-          setProgress(status.progress);
-        }
-        
-        // Check if completed
-        if (status.status === 'completed' || status.status === 'completed_with_errors') {
-          clearInterval(interval);
-          setPollingInterval(null);
-          setProcessing(false);
-          
-          // Move to review after short delay
-          setTimeout(() => {
-            setStage('review');
-          }, 500);
-        } else if (status.status === 'failed') {
-          clearInterval(interval);
-          setPollingInterval(null);
-          setProcessing(false);
-          setProcessingError('Processing failed. Check errors in review screen.');
-          
-          // Still allow review to see errors
-          setTimeout(() => {
-            setStage('review');
-          }, 2000);
-        } else if (status.status === 'quota_exhausted') {
-          clearInterval(interval);
-          setPollingInterval(null);
-          setProcessing(false);
-          setProcessingError('Gemini quota exhausted. Check extraction errors and provider cooldown.');
-          setStage('review');
+        snapshot = await getBatchStatus(batchId);
+        consecutiveErrors = 0;
+        if (snapshot.progress) {
+          setProgress(snapshot.progress);
         }
       } catch (err) {
+        consecutiveErrors += 1;
         console.error('Polling error:', err);
-        // Continue polling - might be transient error
+      } finally {
+        inFlight = false;
       }
-    }, 2500);
-    
+
+      // Every poll ends in: keep waiting, show results, or show a clear error (never poll forever).
+      const decision = decidePoll(snapshot, { startedAt, now: Date.now(), consecutiveErrors });
+      if (decision.action === 'review') {
+        stop();
+        // Move to review after short delay
+        setTimeout(() => {
+          setStage('review');
+        }, 500);
+      } else if (decision.action === 'fail') {
+        stop();
+        setProcessingError(decision.message);
+        if (decision.goToReview) {
+          // The review screen lists the persisted extraction errors per page.
+          setStage('review');
+        }
+      }
+    }, POLL_INTERVAL_MS);
+
+    pollRef.current = interval;
     setPollingInterval(interval);
   };
 
@@ -271,6 +285,12 @@ export const WorkflowScreen: React.FC = () => {
                 </p>
                 {progress.current_file && (
                   <p className="current-file">{progress.current_file}</p>
+                )}
+                {!!progress.page_total && (
+                  <p className="progress-text">
+                    Page {progress.page_current ?? 0} of {progress.page_total}
+                    {!!progress.pages_failed && ` - ${progress.pages_failed} failed${progress.last_error_code ? ` (${progress.last_error_code})` : ''}`}
+                  </p>
                 )}
                 <div className="progress-bar">
                   <div 

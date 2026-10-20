@@ -4,6 +4,7 @@ This module provides in-process background task management for MVP.
 For production, replace with Celery/RQ for distributed processing.
 """
 import asyncio
+import hashlib
 import time
 import logging
 from pathlib import Path
@@ -28,6 +29,28 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# Failures that mean the provider/network is unavailable for every page (not one bad page).
+PROVIDER_WIDE_ERROR_CODES = frozenset({
+    "provider_unavailable", "provider_timeout", "dns_error", "connection_refused",
+    "network_connection_failed", "network_transport_error",
+})
+
+
+def verify_download_integrity(document: dict, content: bytes) -> Optional[dict]:
+    """Compare downloaded original bytes with the SHA-256 recorded at upload. None = OK or no hash recorded (legacy)."""
+    expected = document.get("sha256")
+    if not expected:
+        return None
+    actual = hashlib.sha256(content).hexdigest()
+    if actual == expected:
+        return None
+    return {"document_id": document.get("document_id"),
+            "error": "Stored original does not match the uploaded file (SHA-256 mismatch); extraction stopped for this document",
+            "error_code": "storage_integrity_error",
+            "diagnostics": {"expected_bytes": document.get("size_bytes"), "actual_bytes": len(content),
+                            "expected_sha256_prefix": expected[:8], "actual_sha256_prefix": actual[:8]}}
 
 
 class ProcessingStatus(str, Enum):
@@ -99,9 +122,12 @@ class BackgroundProcessor:
         self._hybrid_verifier = None
         
         # Gemini timeout and retry settings
-        self._gemini_timeout_seconds = 90  # 90s per page
-        self._max_retries = 2  # Retry twice on transient errors
-        self._retry_delay = 5  # 5s between retries
+        self._gemini_timeout_seconds = settings.extraction_timeout_seconds
+        # The SDK retry layer is disabled (attempts=1), so this is the ONLY retry layer.
+        self._max_retries = max(0, settings.extraction_max_attempts - 1)
+        self._retry_delay = 5  # 5s, then 10s between retries
+        self._max_consecutive_failures = settings.extraction_max_consecutive_failures
+        self._batch_deadline_seconds = settings.extraction_batch_deadline_seconds
     
     def _get_preprocessor(self):
         """Lazy load image preprocessor."""
@@ -237,6 +263,7 @@ class BackgroundProcessor:
         job.status = ProcessingStatus.PROCESSING
         job.started_at = datetime.utcnow()
         workspace = TemporaryDirectory(prefix="virology-processing-")
+        integrity_errors = []
         batch_data = {}
         
         try:
@@ -256,7 +283,13 @@ class BackgroundProcessor:
                     name = document["storage_name"]
                     from app.services.storage.storage_adapter import validate_storage_name
                     validate_storage_name(name)
-                    (batch_dir / name).write_bytes(self._storage.download_file(batch_id, name))
+                    content = self._storage.download_file(batch_id, name)
+                    mismatch = verify_download_integrity(document, content)
+                    if mismatch:
+                        logger.error("[%s] storage_integrity_error document=%s diagnostics=%s", batch_id, mismatch["document_id"], mismatch["diagnostics"])
+                        integrity_errors.append(mismatch)
+                        continue
+                    (batch_dir / name).write_bytes(content)
             
             if not batch_dir.exists():
                 raise FileNotFoundError(f"Batch directory not found: {batch_id}")
@@ -266,15 +299,19 @@ class BackgroundProcessor:
             image_files = list(batch_dir.glob("*.png")) + list(batch_dir.glob("*.jpg")) + list(batch_dir.glob("*.jpeg"))
             all_files = pdf_files + image_files
             
-            if not all_files:
+            if not all_files and not integrity_errors:
                 raise ValueError("No files found in batch")
             
             job.progress["total"] = len(all_files)
             logger.info(f"[{batch_id}] Found {len(all_files)} files to process")
             
             commitment_records = []
-            errors = []
+            errors = list(integrity_errors)
             stop_for_provider_error = False
+            pages_succeeded = 0
+            pages_failed = 0
+            consecutive_failures = 0
+            batch_deadline = time.monotonic() + self._batch_deadline_seconds
             
             # Process each file
             for file_index, file_path in enumerate(all_files):
@@ -307,13 +344,24 @@ class BackgroundProcessor:
                     # Step 2: Process each page independently
                     for page_index, image_bytes in enumerate(images):
                         logger.info(f"[{batch_id}][{document_id}] Processing page {page_index + 1}/{len(images)}")
+                        if time.monotonic() >= batch_deadline:
+                            logger.error(f"[{batch_id}] Batch deadline reached; remaining pages are not processed")
+                            errors.append({"document_id": document_id, "page_index": page_index,
+                                           "error": "Batch processing deadline reached; remaining pages were not processed",
+                                           "error_code": "batch_deadline_exceeded",
+                                           "diagnostics": {"deadline_seconds": self._batch_deadline_seconds}})
+                            stop_for_provider_error = True
+                            break
+                        job.progress.update({"page_current": page_index + 1, "page_total": len(images),
+                                             "pages_succeeded": pages_succeeded, "pages_failed": pages_failed})
                         
                         try:
                             # Extract fields from this page
                             extraction_result = await self._extract_with_retry(
                                 image_bytes=image_bytes,
                                 document_id=document_id,
-                                page_index=page_index
+                                page_index=page_index,
+                                deadline=batch_deadline
                             )
                             
                             # Create ONE CommitmentRecord from this page
@@ -326,6 +374,8 @@ class BackgroundProcessor:
                             commitment_records.append(commitment)
                             
                             logger.info(f"[{batch_id}][{document_id}] Page {page_index + 1} processed: commitment {commitment.commitment_record_id}")
+                            pages_succeeded += 1
+                            consecutive_failures = 0
                             
                         except asyncio.TimeoutError:
                             error_msg = f"Gemini timeout after {self._gemini_timeout_seconds}s"
@@ -363,7 +413,8 @@ class BackgroundProcessor:
 
                                 errors.append({"document_id": document_id, "page_index": page_index,
                                                "error": str(e) if isinstance(e, ExtractionError) else "Quota exhausted",
-                                               "error_code": "daily_quota"})
+                                               "error_code": "daily_quota",
+                                               "diagnostics": e.diagnostics if isinstance(e, ExtractionError) else {}})
                                 break
 
                             # For other errors, create a pending commitment record
@@ -388,10 +439,27 @@ class BackgroundProcessor:
                                 "error": str(e) if isinstance(e, ExtractionError) else "Page extraction failed; manual review required",
                                 "error_code": e.code if isinstance(e, ExtractionError) else "extraction_failed",
                                 "retry_after_seconds": e.retry_after_seconds if isinstance(e, ExtractionError) else None,
+                                "diagnostics": e.diagnostics if isinstance(e, ExtractionError) else {},
                                 "error_type": type(e).__name__
                             })
+                            pages_failed += 1
+                            job.progress.update({"pages_failed": pages_failed,
+                                                 "last_error_code": e.code if isinstance(e, ExtractionError) else "extraction_failed"})
+                            if isinstance(e, ExtractionError) and e.code in PROVIDER_WIDE_ERROR_CODES:
+                                consecutive_failures += 1
+                            else:
+                                consecutive_failures = 0
+                            if consecutive_failures >= self._max_consecutive_failures:
+                                logger.error(f"[{batch_id}] {consecutive_failures} consecutive provider failures; stopping batch")
+                                errors.append({"document_id": document_id, "page_index": page_index,
+                                               "error": f"Extraction stopped after {consecutive_failures} consecutive provider failures; remaining pages were not processed",
+                                               "error_code": "provider_circuit_open",
+                                               "diagnostics": {"consecutive_failures": consecutive_failures}})
+                                stop_for_provider_error = True
+                                break
                             if isinstance(e, ExtractionError) and e.code in (
-                                    "invalid_credentials", "model_incompatible", "schema_incompatible", "request_rejected", "rate_limit"):
+                                    "invalid_credentials", "model_incompatible", "schema_incompatible", "request_rejected", "rate_limit",
+                                    "tls_certificate_error", "tls_error", "proxy_error", "network_access_denied"):
                                 stop_for_provider_error = True
                                 break
                     
@@ -417,14 +485,18 @@ class BackgroundProcessor:
                             document["document_id"], page_index, "Page not processed"))
                         represented_pages.add(form_id)
                         errors.append({"document_id": document["document_id"], "page_index": page_index,
-                                       "error": "Page not processed; manual review required"})
+                                       "error": "Page not processed; manual review required",
+                                       "error_code": "page_not_processed"})
 
+            job.progress.update({"pages_succeeded": pages_succeeded, "pages_failed": pages_failed})
             # Determine final status
             if job.status == ProcessingStatus.QUOTA_EXHAUSTED:
                 # Already set - keep it
                 pass
-            elif len(commitment_records) == 0 and len(errors) > 0:
+            elif pages_succeeded == 0 and len(errors) > 0:
+                # Nothing was extracted: a terminal failure, not an "empty success" with placeholder records.
                 job.status = ProcessingStatus.FAILED
+                job.error = errors[0].get("error") or "Extraction failed for every page"
             elif len(errors) > 0:
                 job.status = ProcessingStatus.COMPLETED_WITH_ERRORS
             else:
@@ -873,7 +945,8 @@ class BackgroundProcessor:
         logger.info(f"Form {form.form_id}: Created {len(commitments)} commitments")
         return commitments
     
-    async def _extract_with_retry(self, image_bytes: bytes, document_id: str, page_index: int):
+    async def _extract_with_retry(self, image_bytes: bytes, document_id: str, page_index: int,
+                                  deadline: Optional[float] = None):
         """Extract with timeout and retry logic.
         
         Args:
@@ -890,21 +963,41 @@ class BackgroundProcessor:
         """
         # The adapter owns quota classification. Retry only sanitized, transient failures.
         for attempt in range(self._max_retries + 1):
+            attempt_started = time.monotonic()
+            attempt_timeout = self._gemini_timeout_seconds
+            if deadline is not None:
+                remaining = deadline - attempt_started
+                if remaining <= 1:
+                    raise ExtractionError("Batch processing deadline reached", code="batch_deadline_exceeded",
+                                          diagnostics={"attempt": attempt + 1})
+                attempt_timeout = min(attempt_timeout, remaining)
             try:
                 return await asyncio.wait_for(
                     asyncio.to_thread(self._extractor.extract, image=image_bytes,
                                       document_id=document_id, page_index=page_index),
-                    timeout=self._gemini_timeout_seconds,
+                    timeout=attempt_timeout,
                 )
             except asyncio.TimeoutError:
                 # Cancelling to_thread cannot stop the HTTP operation: never start an overlapping retry.
-                raise ExtractionError("Extraction timed out", code="provider_timeout") from None
+                # Close the in-flight HTTP clients so the orphaned call ends now instead of running on.
+                abort = getattr(self._extractor, "abort_inflight", None)
+                if callable(abort):
+                    abort()
+                diagnostics = {"timeout_layer": "worker", "timeout_seconds": attempt_timeout,
+                               "elapsed_seconds": round(time.monotonic() - attempt_started, 3),
+                               "attempt": attempt + 1}
+                logger.warning("[%s][page %s] Extraction deadline exceeded diagnostics=%s",
+                               document_id, page_index, diagnostics)
+                raise ExtractionError("Extraction timed out", code="provider_timeout",
+                                      diagnostics=diagnostics) from None
             except ExtractionError as failure:
                 if not failure.retryable or attempt == self._max_retries:
                     raise
                 delay = max(self._retry_delay * (2 ** attempt), failure.retry_after_seconds or 0)
                 if delay > 30:
                     # Surface provider cooldown instead of sleeping or rotating keys around it.
+                    raise
+                if deadline is not None and time.monotonic() + delay >= deadline:
                     raise
                 logger.warning("Transient extraction failure (%s); bounded retry scheduled", failure.code)
                 await asyncio.sleep(delay)

@@ -20,6 +20,7 @@ import os
 import sys
 import time
 import logging
+import pytest
 from pathlib import Path
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
@@ -38,16 +39,19 @@ sys.path.insert(0, str(backend_dir))
 # Ensure .env is loaded
 from dotenv import load_dotenv
 env_path = backend_dir.parent / ".env"
-load_dotenv(env_path, override=True)  # override=True to force reload
+if not env_path.exists():
+    env_path = backend_dir.parent.parent.parent / ".env"
 
-logger.info(f"✅ Loaded .env from {env_path}")
+if env_path.exists():
+    load_dotenv(env_path, override=True)
+    logger.info(f"✅ Loaded .env from {env_path}")
+else:
+    pytest.skip(f"Skipping live test: .env not found", allow_module_level=True)
 
 # Verify NOT in demo mode
 demo_mode = os.getenv("DEMO_MODE", "true").lower()
 if demo_mode == "true":
-    logger.error("❌ DEMO_MODE=true in environment. Cannot run LIVE test.")
-    logger.error("   Please set DEMO_MODE=false in .env and restart")
-    sys.exit(1)
+    pytest.skip("Skipping live test: DEMO_MODE=true (requires DEMO_MODE=false)", allow_module_level=True)
 
 logger.info("✅ DEMO_MODE=false verified")
 
@@ -58,17 +62,14 @@ from app.services.extraction.quota_manager import get_quota_manager
 
 # Double-check settings
 if settings.demo_mode:
-    logger.error("❌ settings.demo_mode=True. Cannot run LIVE test.")
-    sys.exit(1)
+    pytest.skip("Skipping live test: settings.demo_mode=True", allow_module_level=True)
 
 logger.info(f"✅ settings.demo_mode=False")
 logger.info(f"✅ settings.gemini_model={settings.gemini_model}")
 
 # Verify model is not disabled
 if settings.gemini_model == "gemini-1.5-flash":
-    logger.error("❌ gemini-1.5-flash was disabled on 29.09.2025")
-    logger.error("   Please update GEMINI_MODEL in .env to gemini-2.0-flash-exp")
-    sys.exit(1)
+    pytest.skip("Skipping live test: gemini-1.5-flash was disabled", allow_module_level=True)
 
 logger.info(f"✅ Model {settings.gemini_model} is valid")
 

@@ -6,6 +6,8 @@ Handles image-to-structured-data extraction with proper error handling.
 import time
 import json
 import ssl
+import re
+import socket
 from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field, ValidationError
@@ -41,36 +43,140 @@ class CommitmentFormExtraction(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="List of extraction warnings or uncertainties")
 
 
+def _exception_chain(error: Exception) -> list[BaseException]:
+    chain = []
+    current = error
+    while current is not None and len(chain) < 8 and all(current is not item for item in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _failure_diagnostics(error: Exception) -> dict:
+    """Only structural metadata; never exception messages, URLs, headers or payloads."""
+    chain = _exception_chain(error)
+    result = {"exception_types": [type(item).__name__ for item in chain]}
+    for item in chain:
+        status = getattr(item, "code", None)
+        if status is None:
+            status = getattr(getattr(item, "response", None), "status_code", None)
+        try:
+            status = int(status)
+        except (ValueError, TypeError):
+            status = None
+        if status is not None and 100 <= status <= 599:
+            result.setdefault("http_status", status)
+        # Provider status enum (e.g. DEADLINE_EXCEEDED) and response server/via headers show WHO answered
+        # (Google front end vs. a local proxy/inspection layer). Never message text, URLs or payloads.
+        api_status = getattr(item, "status", None)
+        if isinstance(api_status, str) and re.fullmatch(r"[A-Z_]{3,40}", api_status):
+            result.setdefault("api_status", api_status)
+        headers = getattr(getattr(item, "response", None), "headers", None)
+        if headers is not None:
+            for header, key in (("server", "response_server"), ("via", "response_via")):
+                try:
+                    value = headers.get(header)
+                except Exception:
+                    value = None
+                if isinstance(value, str) and value:
+                    result.setdefault(key, re.sub(r"[^\x20-\x7e]", "?", value)[:60])
+        for attribute in ("errno", "winerror", "verify_code"):
+            value = getattr(item, attribute, None)
+            if isinstance(value, int):
+                result.setdefault(attribute, value)
+        for error_type, phase in ((httpx.ConnectTimeout, "connect"), (httpx.ReadTimeout, "read"),
+                                  (httpx.WriteTimeout, "write"), (httpx.PoolTimeout, "pool")):
+            if isinstance(item, error_type):
+                result.setdefault("timeout_phase", phase)
+    return result
+
+
 def _provider_failure(error: Exception) -> ExtractionError:
-    """Classify internally; never return/log SDK bodies, key values or response text."""
+    """Preserve safe cause/status metadata while withholding all provider text."""
+    diagnostics = _failure_diagnostics(error)
+    status = diagnostics.get("http_status")
+    chain = _exception_chain(error)
+
+    def failure(message, **metadata):
+        return ExtractionError(message, diagnostics=diagnostics, **metadata)
+
+    if status is None:
+        if any(isinstance(item, socket.gaierror) for item in chain):
+            return failure("Gemini endpoint DNS resolution failed", code="dns_error", retryable=True)
+        if any(isinstance(item, ssl.SSLCertVerificationError) for item in chain):
+            return failure("Gemini TLS certificate verification failed", code="tls_certificate_error")
+        if any(isinstance(item, ssl.SSLError) for item in chain):
+            return failure("Gemini TLS negotiation failed", code="tls_error")
+        if any(isinstance(item, httpx.ProxyError) for item in chain):
+            return failure("Gemini proxy connection failed", code="proxy_error")
+        if any(isinstance(item, (TimeoutError, httpx.TimeoutException)) for item in chain):
+            diagnostics["timeout_layer"] = "httpx" if any(
+                isinstance(item, httpx.TimeoutException) for item in chain) else "sdk_or_transport"
+            return failure("Gemini request timed out", code="provider_timeout", retryable=True)
+        if any(isinstance(item, PermissionError) for item in chain) or diagnostics.get("winerror") == 10013:
+            return failure("Gemini connection denied by the local network or operating system", code="network_access_denied")
+        if any(isinstance(item, ConnectionRefusedError) for item in chain):
+            return failure("Gemini connection was refused", code="connection_refused", retryable=True)
+        if any(isinstance(item, httpx.ConnectError) for item in chain):
+            return failure("Gemini network connection failed; inspect safe diagnostics", code="network_connection_failed", retryable=True)
+        if any(isinstance(item, httpx.TransportError) for item in chain):
+            return failure("Gemini transport failed; inspect safe diagnostics", code="network_transport_error", retryable=True)
+
     text = str(error).lower()
-    status = getattr(error, "code", None)
-    try:
-        status = int(status)
-    except (TypeError, ValueError):
-        status = None
     daily, retry, quota_type = parse_gemini_error(error)
     if daily or status == 429 or quota_type == "rate_limit":
-        return ExtractionError("Gemini daily quota exhausted" if daily else "Gemini rate limit; retry later",
+        return failure("Gemini daily quota exhausted" if daily else "Gemini rate limit; retry later",
                                code="daily_quota" if daily else "rate_limit", retryable=not daily,
                                retry_after_seconds=retry if retry is not None else (None if daily else 60))
     if status in (401, 403) or any(term in text for term in
             ("invalid api key", "api key not valid", "api_key_invalid", "unauthorized", "permission_denied")):
-        return ExtractionError("Gemini credentials are invalid or access is denied", code="invalid_credentials")
+        return failure("Gemini credentials are invalid or access is denied", code="invalid_credentials")
     if "all api keys are disabled" in text:
-        return ExtractionError("No active Gemini credentials; restart after fixing configuration", code="invalid_credentials")
+        return failure("No active Gemini credentials; restart after fixing configuration", code="invalid_credentials")
     if status == 404 or ("model" in text and any(term in text for term in
                        ("not found", "not supported", "unsupported", "does not support"))):
-        return ExtractionError("Configured Gemini model or API operation is unavailable", code="model_incompatible")
+        return failure("Configured Gemini model or API operation is unavailable", code="model_incompatible")
     if "additionalproperties" in text or ("schema" in text and (status == 400 or isinstance(error, ValueError))):
-        return ExtractionError("Gemini rejected the structured output schema", code="schema_incompatible")
-    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
-        return ExtractionError("Gemini request timed out", code="provider_timeout", retryable=True)
-    if isinstance(error, httpx.TransportError) or (status is not None and status >= 500):
-        return ExtractionError("Gemini service or network is unavailable", code="provider_unavailable", retryable=True)
+        return failure("Gemini rejected the structured output schema", code="schema_incompatible")
+    if status is not None and status >= 500:
+        return failure(f"Gemini endpoint returned HTTP {status}", code="provider_unavailable", retryable=True)
     if status in (400, 402):
-        return ExtractionError("Gemini rejected the request; check API configuration or billing", code="request_rejected")
-    return ExtractionError("Gemini extraction failed", code="extraction_failed")
+        return failure("Gemini rejected the request; check API configuration or billing", code="request_rejected")
+    return failure("Gemini extraction failed; inspect safe diagnostics", code="extraction_failed")
+
+
+def prepare_image_payload(image: bytes, mime_type: str, max_dimension: int, jpeg_quality: int) -> tuple[bytes, str]:
+    """Return the (bytes, mime) actually sent to Gemini.
+
+    Rendered PDF pages are lossless PNGs of 2-6 MB, while the scans inside hold ~1500x2100 px.
+    A bounded JPEG is 10-15x smaller at the same legibility. Optimisation must never block
+    extraction, so any problem falls back to the original bytes.
+    """
+    if max_dimension <= 0 or mime_type == "application/pdf":
+        return image, mime_type
+    try:
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(image)) as source:
+            oversized = max(source.size) > max_dimension
+            if mime_type == "image/jpeg" and not oversized:
+                return image, mime_type
+            if source.mode in ("RGBA", "LA", "P"):
+                rgba = source.convert("RGBA")
+                flattened = Image.new("RGB", rgba.size, (255, 255, 255))
+                flattened.paste(rgba, mask=rgba.getchannel("A"))
+            else:
+                flattened = source.convert("RGB")
+        if oversized:
+            flattened.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+        buffer = BytesIO()
+        flattened.save(buffer, format="JPEG", quality=jpeg_quality, optimize=True)
+        optimized = buffer.getvalue()
+        if len(optimized) < len(image):
+            return optimized, "image/jpeg"
+    except Exception:
+        pass
+    return image, mime_type
 
 
 # Prompt versions for A/B testing
@@ -349,13 +455,6 @@ class GeminiExtractor(Extractor):
         # This fixes SSL handshake timeout issues on Windows
         self.ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         
-        # Create custom HTTP transport with IPv4-only and SSL context
-        # This resolves IPv6 connection timeout issues
-        self.http_transport = httpx.HTTPTransport(
-            verify=self.ssl_context,
-            local_address="0.0.0.0"  # Force IPv4 only
-        )
-        
         # Select prompt based on version
         if prompt_version == "1.0":
             self.prompt = EXTRACTION_PROMPT_V1
@@ -368,6 +467,8 @@ class GeminiExtractor(Extractor):
         
         # Store sender normalizer for post-processing
         self.sender_normalizer = None
+        # HTTP clients of the call currently running in the worker thread (one page at a time).
+        self._inflight = []
     
     def extract(
         self,
@@ -392,6 +493,7 @@ class GeminiExtractor(Extractor):
         import logging
         logger = logging.getLogger(__name__)
         
+        from app.core.config import settings
         start_time = time.time()
         logger.info(f"[{document_id}] Starting extraction (page {page_index})")
         
@@ -427,6 +529,8 @@ class GeminiExtractor(Extractor):
         client = None
         httpx_client = None
         key_id = None
+        payload_size = None
+        mime_type = None
         try:
             key_id, key_value = self.key_manager.get_next_key()
             # Detect image format from magic bytes
@@ -443,23 +547,37 @@ class GeminiExtractor(Extractor):
             logger.info(f"[{document_id}] Format detected: {mime_type} in {format_elapsed:.1f}ms")
             
             # Create image part
+            sent_bytes, mime_type = prepare_image_payload(
+                image, mime_type, settings.gemini_image_max_dimension, settings.gemini_image_jpeg_quality)
+            payload_size = len(sent_bytes)
+            logger.info(f"[{document_id}] Payload: original={len(image)} bytes, sent={payload_size} bytes ({mime_type})")
             part_start = time.time()
             image_part = types.Part.from_bytes(
-                data=image,
+                data=sent_bytes,
                 mime_type=mime_type
             )
             part_elapsed = (time.time() - part_start) * 1000
             logger.info(f"[{document_id}] Image part created in {part_elapsed:.1f}ms")
             
             # Create a fresh client for this request with the selected key
-            # Use custom HTTP transport with IPv4 and truststore SSL context
+            # Retain verified TLS and HTTPX's standard environment-proxy/NO_PROXY routing.
             client_start = time.time()
             
-            # Create custom HTTPX client with our transport
-            httpx_client = httpx.Client(
-                transport=httpx.HTTPTransport(verify=self.ssl_context, local_address="0.0.0.0"),
-                timeout=60.0  # 60 seconds timeout
-            )
+            # A custom transport disables HTTPX environment-proxy discovery.
+            # Use standard routing/IP selection instead of silently forcing a direct IPv4 connection.
+            request_timeout = float(settings.gemini_request_timeout_seconds)
+            if settings.gemini_force_ipv4:
+                # IPv4 only: skips black-holed IPv6 addresses. TLS verification stays on (truststore context).
+                # A custom transport disables automatic proxy discovery; documented in GEMINI_FORCE_IPV4.
+                httpx_client = httpx.Client(
+                    transport=httpx.HTTPTransport(local_address="0.0.0.0", verify=self.ssl_context),
+                    timeout=request_timeout
+                )
+            else:
+                httpx_client = httpx.Client(
+                    verify=self.ssl_context,
+                    timeout=request_timeout  # per-operation limit; the worker enforces the wall-clock deadline
+                )
             
             # Create Gemini client with custom HTTPX client
             # NOTE: Use 'httpx_client' parameter, not 'client' (which is not supported)
@@ -468,26 +586,31 @@ class GeminiExtractor(Extractor):
                 vertexai=False,  # Explicit Developer API; no implicit enterprise routing.
                 http_options=types.HttpOptions(
                     httpx_client=httpx_client,  # Correct parameter name
-                    timeout=60000,  # 60 seconds in milliseconds
+                    timeout=int(request_timeout * 1000),  # milliseconds; also sent as the server-side deadline
                     retry_options=types.HttpRetryOptions(
                         attempts=1  # Single attempt, no retries (correct parameter name)
                     )
                 )
             )
+            self._inflight = [client, httpx_client]
             client_elapsed = (time.time() - client_start) * 1000
-            logger.info(f"[{document_id}] Client created in {client_elapsed:.1f}ms with IPv4-only transport and 60s timeout")
+            logger.info(f"[{document_id}] Client created in {client_elapsed:.1f}ms with standard proxy/IP routing, verified TLS and {request_timeout:.0f}s timeouts")
             
             # Generate content with Pydantic schema for structured output
             logger.info(f"[{document_id}] Calling Gemini API with model {self.model}...")
             api_call_start = time.time()
             
+            config_kwargs = {
+                "response_mime_type": "application/json",
+                "response_schema": CommitmentFormExtraction,  # Pydantic schema for structured output
+            }
+            thinking_level = (settings.gemini_thinking_level or "").strip().upper()
+            if thinking_level:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
             response = client.models.generate_content(
                 model=self.model,
                 contents=[image_part, self.prompt],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=CommitmentFormExtraction,  # Pydantic schema for structured output
-                )
+                config=types.GenerateContentConfig(**config_kwargs)
             )
             
             api_call_elapsed = (time.time() - api_call_start) * 1000
@@ -586,6 +709,12 @@ class GeminiExtractor(Extractor):
             raise
         except Exception as error:
             failure = _provider_failure(error)
+            failure.diagnostics["elapsed_seconds"] = round(time.time() - start_time, 1)
+            if payload_size is not None:
+                failure.diagnostics["payload_bytes"] = payload_size
+                failure.diagnostics["payload_mime"] = mime_type
+            logger.warning("[%s][page %s] Gemini failure code=%s diagnostics=%s",
+                           document_id, page_index, failure.code, json.dumps(failure.diagnostics, sort_keys=True))
             if failure.code in ("daily_quota", "rate_limit"):
                 self.quota_manager.mark_quota_exhausted(
                     self.model, str(failure), failure.retry_after_seconds, failure.code, key_id)
@@ -593,6 +722,7 @@ class GeminiExtractor(Extractor):
                 self.key_manager.mark_key_failed(key_id, "invalid_credentials")
             raise failure from None
         finally:
+            self._inflight = []
             # Each request owns its transport, including after failed provider calls.
             try:
                 if client is not None and callable(getattr(client, "close", None)):
@@ -602,6 +732,14 @@ class GeminiExtractor(Extractor):
             finally:
                 if httpx_client is not None:
                     httpx_client.close()
+
+    def abort_inflight(self) -> None:
+        """Close the HTTP clients of the running call so a blocked read ends now (the worker gave up)."""
+        for closable in list(self._inflight):
+            try:
+                closable.close()
+            except Exception:
+                pass
 
     def _validate_output(self, fields: dict) -> None:
         """Validate extracted fields structure.

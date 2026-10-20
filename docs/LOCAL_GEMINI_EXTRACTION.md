@@ -44,6 +44,7 @@ $env:APP_ENV_FILE = 'D:\אקתון\The-Central-Virology-Laboratory\.env'
 $env:DEPLOYMENT_MODE = 'local'
 $env:DEMO_MODE = 'false'
 $env:GEMINI_MODEL = 'gemini-3.8-flash'
+$env:EXTRACTION_TIMEOUT_SECONDS = '300'
 $env:CORS_ORIGINS = '["http://localhost:5173"]'
 $env:HYBRID_ENGINE_ENABLED = 'false'
 $env:HYBRID_ENABLE_PREPROCESSING = 'false'
@@ -101,6 +102,62 @@ an explicit daily indicator. Provider RetryInfo is preferred; a daily failure wi
 it receives a conservative local cooldown, not a claimed UTC-midnight reset time.
 These in-memory guards are not a production distributed quota/accounting system.
 
+### Safe network diagnostics
+
+The subsequent transport-diagnostics revision replaces the custom direct IPv4
+transport with HTTPX standard proxy/IP routing, retaining truststore certificate
+and hostname verification. Standard process HTTPS_PROXY/HTTP_PROXY/ALL_PROXY and
+NO_PROXY settings are honored; proxy values/credentials are never logged. Do not
+assume the inspection shell and an already-running backend have the same environment.
+The HTTPX connect/read/write/pool timeouts remain 60 seconds and the SDK timeout remains
+60000 milliseconds. The background outer wait now defaults to 300 seconds, configurable
+through EXTRACTION_TIMEOUT_SECONDS (30-600 seconds). These are different limits;
+60 seconds is not a total processing deadline. The SDK AFC-enabled
+message precedes the remote request and does not establish HTTP or extraction success.
+
+Failures now retain safe diagnostics in the backend log and persisted batch errors:
+exception class chain, HTTP status when available, numeric OS/certificate error codes,
+and timeout phase. Raw exception text, request URLs, headers, response bodies and
+medical contents remain withheld. Codes distinguish dns_error, tls_certificate_error,
+tls_error, proxy_error, network_access_denied, connection_refused,
+network_connection_failed, network_transport_error and provider_timeout. HTTP 5xx
+uses provider_unavailable with the exact available status, rather than conflating it
+with transport failures. Unknown causes remain unknown; classification does not prove
+network filtering, proxy necessity or which IP family failed.
+
+For batch_fd554e03ad41 the earlier provider_unavailable mapping discarded the original
+cause and status. No matching local log/batch artifact or accessible terminal history
+was available during inspection. Its exact historical network/API cause cannot be
+reconstructed from the sanitized error and AFC/client-created lines. No new Gemini
+call was made. A future explicitly approved synthetic request is needed to verify
+connectivity and capture the new diagnostics; existing reviewed batches are not reprocessed.
+
+### Confirmed premature worker timeout: batch_c9c1ed480a99
+
+The owner's timestamped logs show extraction starting at 19:47:28.195 on 2026-10-20,
+the SDK call starting at 19:47:29.285, the worker expiring at 19:48:58.202, and HTTP 200
+at 19:51:00.153. The adapter reported 210873.5ms for the API call and successful JSON
+parsing. A read-only lookup of this batch's status/error metadata confirmed the stored
+worker-timeout message with empty diagnostics. The old 90-second worker guard cancelled
+the waiting future, not its synchronous HTTP thread, so the later response had no
+consumer. It could not replace the already-persisted missing-field record.
+
+Only the worker deadline is increased to a bounded default of 300 seconds, covering
+the observed approximately 212-second extraction. HTTPX/SDK limits, retry counts,
+TLS/proxy routing, model, Supabase, approval/export controls and reviewed values are
+unchanged. Worker timeout errors now retain timeout_layer=worker, limit, elapsed time
+and attempt; HTTPX timeout errors identify their own layer and phase. Genuinely late
+responses are still not written over completed batches or human review. The previous
+HTTP 503 in the supplied logs belongs to a different batch; it is not the outcome of
+this batch. Proxy/filtering/model latency is not diagnosed from these timestamps.
+
+Focused offline regressions reproduce the earlier rejection and successful delivery
+within the new bound using a validated in-memory SDK response, check deadline bounds,
+and ensure worker versus HTTPX metadata stays distinct. No new Gemini call was made.
+Restart the backend with the setting above; do not reprocess an existing reviewed
+batch. A fresh synthetic extraction still needs explicit live-call approval before
+an assistant runs it. HTTP 200 and parsing do not prove source-field accuracy.
+
 A failed page produces a missing/manual-review commitment rather than fabricated
 patient values. Accepted source pages remain represented once each. Existing raw,
 normalized and reviewed patient fields, manual corrections, persistence and Excel
@@ -139,3 +196,13 @@ deployment, live Supabase change or Gemini API call occurred.
 - https://ai.google.dev/gemini-api/docs/structured-output
 - https://ai.google.dev/gemini-api/docs/troubleshooting
 - https://ai.google.dev/gemini-api/docs/rate-limits
+
+## GEMINI_FORCE_IPV4 (IPv6 black-holed networks)
+
+Diagnosed 2026-10-21: DNS returns 8 IPv6 then 8 IPv4 addresses for generativelanguage.googleapis.com; all IPv6 connects timed out
+(3 s each) while IPv4 connected in ~7 ms. httpx tries addresses in order with a full timeout each, so requests stalled in the TCP connect
+phase. A text-only request over IPv4 returned HTTP 200 (TCP 0.09 s, TLS 0.10 s).
+
+Set `GEMINI_FORCE_IPV4=true` (default `false`) to bind the Gemini client to IPv4 (`local_address=0.0.0.0`). TLS verification still
+uses the truststore context and timeouts/retries are unchanged. Limitation: a custom httpx transport bypasses automatic proxy
+discovery (HTTP_PROXY/HTTPS_PROXY/system proxy); leave it `false` behind a proxy. Windows network settings are not modified.

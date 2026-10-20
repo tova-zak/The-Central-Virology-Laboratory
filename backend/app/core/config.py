@@ -59,6 +59,24 @@ class Settings(BaseSettings):
     max_request_size_mb: int = Field(default=210, ge=1, le=512)
     upload_requests_per_minute: int = Field(default=6, ge=1, le=60)
     concurrent_processing_batches: int = Field(default=1, ge=1, le=4)
+    # Overall per-page attempt deadline; separate from HTTPX operation timeouts.
+    extraction_timeout_seconds: int = Field(default=300, ge=30, le=600)
+    # Bounded, observable extraction. Total attempts per page (SDK retries are disabled: attempts=1).
+    extraction_max_attempts: int = Field(default=2, ge=1, le=3)
+    # Stop the batch after this many consecutive provider-wide failures (503/504/timeout/network).
+    extraction_max_consecutive_failures: int = Field(default=2, ge=1, le=10)
+    # Hard wall-clock ceiling for one batch; remaining pages are recorded as not processed.
+    extraction_batch_deadline_seconds: int = Field(default=1800, ge=60, le=7200)
+    # Gemini HTTP request timeout (also sent to the server as its processing deadline).
+    gemini_request_timeout_seconds: int = Field(default=60, ge=10, le=300)
+    # Page image sent to Gemini: longest side in pixels (0 = send the rendered PNG unchanged) and JPEG quality.
+    gemini_image_max_dimension: int = Field(default=2048, ge=0, le=4096)
+    gemini_image_jpeg_quality: int = Field(default=90, ge=50, le=100)
+    # Optional thinking level for latency tuning ("" = model default; gemini-3.8-flash rejects "minimal").
+    gemini_thinking_level: Literal["", "low", "medium", "high"] = ""
+    # Bind the Gemini HTTP client to IPv4 (local_address=0.0.0.0). For networks where IPv6 is advertised in DNS
+    # but black-holed. NOTE: a custom transport bypasses httpx automatic proxy discovery (HTTP(S)_PROXY / system proxy).
+    gemini_force_ipv4: bool = False
     max_image_pixels: int = Field(default=20_000_000, ge=1, le=80_000_000)
 
     @property

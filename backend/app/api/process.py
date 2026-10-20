@@ -1,5 +1,6 @@
 """Processing API endpoints for extraction workflow."""
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status
@@ -91,6 +92,29 @@ async def process_batch(batch_id: str):
         )
 
 
+def _report_interrupted_if_stale(batch_data: Dict[str, Any]) -> Dict[str, Any]:
+    """A persisted queued/processing batch with no in-memory job can never finish (the worker was
+    lost, e.g. server restart). Report a terminal state instead of letting clients poll forever.
+    The stored record is left untouched so the manual-recovery rules still apply."""
+    if batch_data.get("status") not in ("queued", "processing"):
+        return batch_data
+    try:
+        saved_at = datetime.fromisoformat(str(batch_data.get("saved_at")))
+        if saved_at.tzinfo is None:
+            saved_at = saved_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return batch_data
+    grace_seconds = settings.extraction_batch_deadline_seconds + 120
+    if (datetime.now(timezone.utc) - saved_at).total_seconds() <= grace_seconds:
+        return batch_data
+    interrupted = dict(batch_data)
+    interrupted["status"] = "failed"
+    interrupted["errors"] = [*batch_data.get("errors", []), {
+        "error": "Processing was interrupted (the worker was lost, e.g. server restart); upload the documents again",
+        "error_code": "processing_interrupted"}]
+    return interrupted
+
+
 @router.get("/batches/{batch_id}")
 async def get_batch_status(batch_id: str):
     """Get batch processing status and results.
@@ -138,6 +162,8 @@ async def get_batch_status(batch_id: str):
     
     # No active job - try to load from persistent storage
     batch_data = _storage.load_batch(batch_id)
+    if batch_data:
+        batch_data = _report_interrupted_if_stale(batch_data)
     
     if batch_data:
         # Add record_status to each test_record

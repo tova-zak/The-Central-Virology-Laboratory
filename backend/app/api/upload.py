@@ -1,4 +1,6 @@
 """File upload API endpoints."""
+import hashlib
+import logging
 import uuid
 from io import BytesIO
 from pathlib import Path
@@ -11,6 +13,7 @@ from app.services.storage import get_storage_backend
 
 
 router = APIRouter(prefix="/api", tags=["upload"])
+logger = logging.getLogger(__name__)
 
 
 # Response models
@@ -19,6 +22,7 @@ class DocumentInfo(BaseModel):
     document_id: str
     filename: str
     size_bytes: int
+    page_count: int = 1
 
 
 class BatchResponse(BaseModel):
@@ -140,13 +144,18 @@ async def upload_files(files: List[UploadFile] = File(...)):
         file_ext = next(ext for magic, ext in ((b"%PDF", ".pdf"), (b"\x89PNG", ".png"),
                                                (b"\xff\xd8\xff", ".jpg")) if content.startswith(magic))
         storage.upload_file(batch_id, f"{doc_id}{file_ext}", content)
+        content_sha256 = hashlib.sha256(content).hexdigest()
         manifest.append({"document_id": doc_id, "storage_name": f"{doc_id}{file_ext}",
-                         "size_bytes": file_size, "page_count": page_count})
+                         "size_bytes": file_size, "page_count": page_count, "sha256": content_sha256})
+        # Safe identifiers only (no filename, no content): lets "what did I upload" be verified later.
+        logger.info("Upload accepted batch=%s document=%s bytes=%d pages=%d sha256=%s",
+                    batch_id, doc_id, file_size, page_count, content_sha256)
         
         documents.append(DocumentInfo(
             document_id=doc_id,
             filename=file.filename or "unknown",
-            size_bytes=file_size
+            size_bytes=file_size,
+            page_count=page_count
         ))
     
     # A successful upload means originals AND batch metadata are durable.
