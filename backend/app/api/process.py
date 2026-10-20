@@ -333,10 +333,10 @@ async def check_export_eligibility(batch_id: str):
             detail=f"Batch {batch_id} not found or not processed"
         )
     
-    test_records = [TestRecord(**r) for r in batch_data["test_records"]]
+    # One-page-one-commitment model: only check commitment_records
     commitment_records = batch_data.get("commitment_records", [])
     
-    can_export, blockers = _check_export_eligibility(test_records, commitment_records)
+    can_export, blockers = _check_export_eligibility_commitments(commitment_records)
     
     return {
         "can_export": can_export,
@@ -760,6 +760,46 @@ def _check_export_eligibility(records: list[TestRecord], commitment_records: lis
             blockers.append(f"orphaned_commitment: {commitment_id}")
     
     return (len(blockers) == 0, blockers)
+
+
+def _check_export_eligibility_commitments(commitment_records: list) -> tuple[bool, list[str]]:
+    """Check if commitment records can be exported (one-page-one-commitment model).
+    
+    STRICT policy: block on:
+    - review_state=='needs_review'
+    - extraction_state=='invalid'
+    - status=='pending' or status=='incomplete'
+    
+    Returns:
+        (can_export, blockers) where blockers is list of "commitment_id: reason"
+    """
+    blockers = []
+    
+    for commitment in commitment_records:
+        commitment_id = commitment.get("commitment_id", "unknown")
+        status = commitment.get("status")
+        
+        # Block on pending or incomplete status
+        if status == "pending":
+            blockers.append(f"{commitment_id}: pending_extraction")
+        elif status == "incomplete":
+            blockers.append(f"{commitment_id}: incomplete_extraction")
+        
+        # Check each field for review_state or extraction_state issues
+        for field_name in ["patient_first_name", "patient_last_name", "patient_id_number", 
+                          "test_date", "test_type", "test_result"]:
+            field_data = commitment.get(field_name)
+            if isinstance(field_data, dict):
+                review_state = field_data.get("review_state")
+                extraction_state = field_data.get("extraction_state")
+                
+                if review_state == "needs_review":
+                    blockers.append(f"{commitment_id}: {field_name}_needs_review")
+                if extraction_state == "invalid":
+                    blockers.append(f"{commitment_id}: {field_name}_invalid")
+    
+    return (len(blockers) == 0, blockers)
+
 
 
 @router.post("/batches/{batch_id}/commitments/{commitment_id}/assign")
