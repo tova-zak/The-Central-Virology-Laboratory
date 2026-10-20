@@ -507,18 +507,25 @@ class BackgroundProcessor:
         if not isinstance(central_numbers, list):
             central_numbers = [central_numbers] if central_numbers else []
         
-        # Extract patient info
-        patient_first_name = fields.get('patient_first_name')
-        patient_last_name = fields.get('patient_last_name')
-        patient_id_number = fields.get('patient_id_number')
-        sender = fields.get('sender')
-        received_date = fields.get('received_date')
-        
+        # Reuse field provenance, uncertainty detection and validation.
+        from app.api.process import (
+            _map_extraction_to_test_record, _detect_uncertainty, _validate_record,
+        )
+        page_record = _map_extraction_to_test_record(extraction_result, document_id, page_index)
+        _detect_uncertainty(page_record, extraction_result)
+        _validate_record(page_record)
+        page_fields = {
+            name: getattr(page_record, name)
+            for name in ("patient_first_name", "patient_last_name", "patient_id_number",
+                         "sender", "received_date", "central_numbers")
+        }
+
         # Create CommitmentRecord
         commitment = CommitmentRecord(
             commitment_record_id=commitment_record_id,
             form_id=f"{document_id}_page_{page_index}",  # One page = one "form" conceptually
             commitment_number=commitment_number_field,
+            **page_fields,
             sample_ids=[],  # Simplified: no separate Sample entities in one-page-one-commitment model
             central_number_refs=central_numbers,  # Store central numbers directly
             relationship_status="none" if not central_numbers else "inferred",

@@ -115,7 +115,7 @@ def test_excel_exporter_correct_headers(tmp_path, sample_test_record, sample_com
     
     expected_headers = [
         "First Name", "Last Name", "ID Number", "Sender",
-        "Received Date", "Central Numbers", "Commitment Numbers"
+        "Received Date", "Central Numbers", "Commitment Number"
     ]
     
     for col_idx, expected_header in enumerate(expected_headers, start=1):
@@ -145,7 +145,9 @@ def test_excel_exporter_correct_data(tmp_path, sample_test_record, sample_commit
     assert ws.cell(row=2, column=4).value == "בית חולים שיבא - תל השומר"  # Sender (normalized)
     assert ws.cell(row=2, column=5).value == "2024-01-15"  # Received Date
     assert ws.cell(row=2, column=6).value == "12345, 67890"  # Central Numbers (comma-separated)
-    assert ws.cell(row=2, column=7).value == "ABC123, DEF456"  # Commitment Numbers
+    assert ws.cell(row=2, column=7).value == "ABC123"
+    assert ws.cell(row=3, column=7).value == "DEF456"
+    assert ws.max_row == 3
 
 
 def test_excel_exporter_handles_empty_lists(tmp_path):
@@ -303,7 +305,10 @@ def test_excel_exporter_uses_reviewed_values(tmp_path):
     
     exporter.export(
         test_records=[record],
-        commitment_records=[],
+        commitment_records=[CommitmentRecord(
+            commitment_record_id="reviewed_commitment", test_id=record.test_id,
+            commitment_number=FieldValue[str](raw_value="SYNTHETIC-COMMITMENT")
+        )],
         output_path=output_path
     )
     

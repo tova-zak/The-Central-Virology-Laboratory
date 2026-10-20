@@ -585,7 +585,34 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
       </div>
 
       {/* Render based on view mode */}
-      {viewMode === 'cards' ? renderCardsView() : (
+      {batchData.commitment_records?.length > 0 && !batchData.test_records?.length ? (
+        <section className="table-section">
+          <h2>Review commitments by page</h2>
+          <table>
+            <thead><tr><th>Page</th>{[
+              'patient_first_name', 'patient_last_name', 'patient_id_number',
+              'sender', 'received_date', 'central_numbers', 'commitment_number'
+            ].map(name => <th key={name}>{getFieldLabel(name)}</th>)}</tr></thead>
+            <tbody>{batchData.commitment_records.map(record => (
+              <tr key={record.commitment_record_id}>
+                <td>{record.form_id}</td>
+                {(['patient_first_name', 'patient_last_name', 'patient_id_number',
+                   'sender', 'received_date', 'central_numbers', 'commitment_number'] as const).map(name => {
+                  const field = record[name];
+                  const value = field?.reviewed_value ?? field?.normalized_value ?? field?.raw_value;
+                  return <td key={name}>
+                    <span>{Array.isArray(value) ? value.join(', ') : value || '-'}</span>
+                    <span>{field?.review_state === 'human_verified' ? ' (Approved) ' : ' (Review required) '}</span>
+                    <button onClick={() => openEditModal(record.commitment_record_id, name, value ?? '')}>
+                      Edit and approve
+                    </button>
+                  </td>;
+                })}
+              </tr>
+            ))}</tbody>
+          </table>
+        </section>
+      ) : viewMode === 'cards' ? renderCardsView() : (
         <>
           {/* Orphaned Commitments Section */}
           {classified.orphanedCommitments && classified.orphanedCommitments.length > 0 && (

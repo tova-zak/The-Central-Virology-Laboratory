@@ -173,8 +173,8 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
     # Find test record
     test_record_dict = None
     test_index = None
-    for idx, record in enumerate(batch_data["test_records"]):
-        if record["test_id"] == test_id:
+    for idx, record in enumerate(batch_data.get("test_records", []) + batch_data.get("commitment_records", [])):
+        if record.get("test_id") == test_id or record.get("commitment_record_id") == test_id:
             test_record_dict = record
             test_index = idx
             break
@@ -186,7 +186,8 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
         )
     
     # Validate field exists
-    if field_name not in test_record_dict:
+    if field_name not in ("patient_first_name", "patient_last_name", "patient_id_number", "sender",
+                          "received_date", "central_numbers", "commitment_number") or field_name not in test_record_dict:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Field {field_name} does not exist"
@@ -198,7 +199,8 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
     # Check if field is editable
     # A field is NOT editable if it was successfully extracted with no issues
     # (extraction_state='found' AND review_state='pending' AND no validation_issues)
-    if (field.get("extraction_state") == "found" and 
+    if ("commitment_record_id" not in test_record_dict and
+        field.get("extraction_state") == "found" and
         field.get("review_state") == "pending" and 
         not field.get("validation_issues", [])):
         raise HTTPException(
@@ -228,7 +230,7 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
     field["review_state"] = "human_verified"
     
     # Re-validate if it was invalid before
-    if field["extraction_state"] == "invalid":
+    if "commitment_record_id" not in test_record_dict and field["extraction_state"] == "invalid":
         field["extraction_state"] = "found"
         field["validation_issues"] = []
     
@@ -236,9 +238,11 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
     _storage.save_batch(batch_id, batch_data)
     
     # Recalculate export eligibility
-    test_record = TestRecord(**test_record_dict)
     commitment_records = batch_data.get("commitment_records", [])
-    can_export, blockers = _check_export_eligibility([test_record], commitment_records)
+    if "commitment_record_id" in test_record_dict:
+        can_export, blockers = _check_export_eligibility_commitments(commitment_records)
+    else:
+        can_export, blockers = _check_export_eligibility([TestRecord(**test_record_dict)], commitment_records)
     
     return {
         "test_record": test_record_dict,
@@ -264,8 +268,8 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
     # Find test record
     test_record_dict = None
     test_index = None
-    for idx, record in enumerate(batch_data["test_records"]):
-        if record["test_id"] == test_id:
+    for idx, record in enumerate(batch_data.get("test_records", []) + batch_data.get("commitment_records", [])):
+        if record.get("test_id") == test_id or record.get("commitment_record_id") == test_id:
             test_record_dict = record
             test_index = idx
             break
@@ -276,7 +280,8 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
             detail=f"Test record {test_id} not found"
         )
     
-    if field_name not in test_record_dict:
+    if field_name not in ("patient_first_name", "patient_last_name", "patient_id_number", "sender",
+                          "received_date", "central_numbers", "commitment_number") or field_name not in test_record_dict:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Field {field_name} does not exist"
@@ -593,45 +598,25 @@ async def export_batch(batch_id: str):
             detail=f"Batch {batch_id} not found or not processed"
         )
     
-    # Reconstruct TestRecord and CommitmentRecord objects from dicts
-    test_records = [TestRecord(**r) for r in batch_data["test_records"]]
-    commitment_records = [CommitmentRecord(**c) for c in batch_data["commitment_records"]]
+    # One-page-one-commitment model: use commitment_records directly
+    commitment_records_data = batch_data.get("commitment_records", [])
     
-    # NEW: Check for unresolved commitment-sample relationships (D2 requirement)
-    unresolved_commitments = [
-        c for c in commitment_records 
-        if c.relationship_status == "unresolved_relationship"
-    ]
+    # Check export eligibility using commitment-only logic
+    can_export, blockers = _check_export_eligibility_commitments(commitment_records_data)
     
-    if unresolved_commitments:
+    if not can_export:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "message": f"Export blocked: {len(unresolved_commitments)} commitments have unresolved sample relationships. Manual review required.",
-                "unresolved_commitment_ids": [c.commitment_record_id for c in unresolved_commitments]
+                "message": "Export blocked: some commitments need review",
+                "blockers": blockers
             }
         )
     
-    # Check for problematic fields (comprehensive blocking per D-07)
-    problematic_records = []
-    for record in test_records:
-        issues = _check_problematic_fields(record)
-        if issues:
-            problematic_records.append({
-                "test_id": record.test_id,
-                "issues": issues
-            })
+    # Reconstruct CommitmentRecord objects from dicts for export
+    commitment_records = [CommitmentRecord(**c) for c in commitment_records_data]
     
-    if problematic_records:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": "Export blocked: some fields need review",
-                "problematic_records": problematic_records
-            }
-        )
-    
-    # Export to Excel
+    # Export to Excel (one-page-one-commitment model)
     exporter = ExcelExporter()
     
     # Create output file
@@ -640,7 +625,7 @@ async def export_batch(batch_id: str):
     output_file = output_dir / f"{batch_id}_export.xlsx"
     
     exporter.export(
-        test_records=test_records,
+        test_records=[],  # Empty for one-page-one-commitment model
         commitment_records=commitment_records,
         output_path=output_file
     )
@@ -774,32 +759,27 @@ def _check_export_eligibility_commitments(commitment_records: list) -> tuple[boo
         (can_export, blockers) where blockers is list of "commitment_id: reason"
     """
     blockers = []
-    
-    for commitment in commitment_records:
-        commitment_id = commitment.get("commitment_id", "unknown")
-        status = commitment.get("status")
-        
-        # Block on pending or incomplete status
-        if status == "pending":
-            blockers.append(f"{commitment_id}: pending_extraction")
-        elif status == "incomplete":
-            blockers.append(f"{commitment_id}: incomplete_extraction")
-        
-        # Check each field for review_state or extraction_state issues
-        for field_name in ["patient_first_name", "patient_last_name", "patient_id_number", 
-                          "test_date", "test_type", "test_result"]:
-            field_data = commitment.get(field_name)
-            if isinstance(field_data, dict):
-                review_state = field_data.get("review_state")
-                extraction_state = field_data.get("extraction_state")
-                
-                if review_state == "needs_review":
-                    blockers.append(f"{commitment_id}: {field_name}_needs_review")
-                if extraction_state == "invalid":
-                    blockers.append(f"{commitment_id}: {field_name}_invalid")
-    
-    return (len(blockers) == 0, blockers)
+    if not commitment_records:
+        return False, ["no_commitment_records"]
 
+    for commitment in commitment_records:
+        commitment_id = commitment.get("commitment_record_id", "unknown")
+        if commitment.get("status") in ("pending", "incomplete"):
+            blockers.append(f"{commitment_id}: incomplete_extraction")
+        if commitment.get("relationship_status") == "unresolved_relationship":
+            blockers.append(f"{commitment_id}: unresolved_relationship")
+        for field_name in ("patient_first_name", "patient_last_name", "patient_id_number",
+                           "sender", "received_date", "central_numbers", "commitment_number"):
+            field = commitment.get(field_name) or {}
+            value = next((field[key] for key in ("reviewed_value", "normalized_value", "raw_value")
+                          if field.get(key) is not None), None)
+            empty = value is None or (isinstance(value, str) and not value.strip()) or value == []
+            if empty or (isinstance(value, list) and any(not str(v or "").strip() for v in value)):
+                blockers.append(f"{commitment_id}: {field_name}_missing")
+            elif field.get("review_state") != "human_verified":
+                blockers.append(f"{commitment_id}: {field_name}_unreviewed")
+
+    return not blockers, blockers
 
 
 @router.post("/batches/{batch_id}/commitments/{commitment_id}/assign")

@@ -103,14 +103,13 @@ class ExcelExporter:
                 received_date = self._get_value(test_record.received_date)
                 central_numbers = self._get_value(test_record.central_numbers)
             else:
-                # No test record found - empty patient fields
-                first_name = ""
-                last_name = ""
-                id_number = ""
-                sender = ""
-                received_date = ""
-                central_numbers = []
-            
+                first_name = self._get_value(commitment.patient_first_name)
+                last_name = self._get_value(commitment.patient_last_name)
+                id_number = self._get_value(commitment.patient_id_number)
+                sender = self._get_value(commitment.sender)
+                received_date = self._get_value(commitment.received_date)
+                central_numbers = self._get_value(commitment.central_numbers)
+
             # Get commitment number
             commitment_num = self._get_value(commitment.commitment_number)
             
@@ -137,7 +136,10 @@ class ExcelExporter:
     def _get_value(self, field_value):
         """Extract value from FieldValue with priority: reviewed > normalized > raw."""
         if hasattr(field_value, 'reviewed_value'):
-            return field_value.reviewed_value or field_value.normalized_value or field_value.raw_value
+            for value in (field_value.reviewed_value, field_value.normalized_value, field_value.raw_value):
+                if value is not None:
+                    return value
+            return None
         return field_value
     
     def _format_list(self, value) -> str:

@@ -184,6 +184,14 @@ class CommitmentRecord(BaseModel):
     test_id: str = ""  # Reference to TestRecord (DEPRECATED, keep for backward compat)
     form_id: str = ""  # Reference to LogicalForm (NEW)
     
+    # Page-owned fields survive persistence without legacy TestRecord entities.
+    patient_first_name: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    patient_last_name: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    patient_id_number: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    sender: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    received_date: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    central_numbers: FieldValue[list[str]] = Field(default_factory=lambda: FieldValue[list[str]]())
+
     # Commitment number
     commitment_number: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
     

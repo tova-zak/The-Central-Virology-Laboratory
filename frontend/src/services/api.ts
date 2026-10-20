@@ -83,6 +83,12 @@ export interface Sample {
 }
 
 export interface CommitmentRecord {
+  patient_first_name?: FieldValue<string>;
+  patient_last_name?: FieldValue<string>;
+  patient_id_number?: FieldValue<string>;
+  sender?: FieldValue<string>;
+  received_date?: FieldValue<string>;
+  central_numbers?: FieldValue<string[]>;
   commitment_record_id: string;
   test_id: string;  // DEPRECATED: will be replaced by form_id
   form_id?: string;  // NEW: link to LogicalForm
