@@ -179,6 +179,11 @@ class QuotaManager:
         Returns:
             (can_proceed, reason_if_blocked)
         """
+        # Skip tracking in DEMO_MODE (MockExtractor doesn't use API)
+        from app.core.config import settings
+        if settings.demo_mode:
+            return True, None  # Always allow in demo mode
+        
         with self._lock:
             now = datetime.now(timezone.utc)
             
