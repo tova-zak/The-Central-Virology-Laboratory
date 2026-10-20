@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.services.processing.background import get_processor, ProcessingStatus
 from app.services.validation import validator
 from app.services.export import ExcelExporter
-from app.services.storage import JSONStorage
+from app.services.storage import get_storage_backend
 from app.domain.models import (
     TestRecord, CommitmentRecord, FieldValue,
     ExtractionState, ReviewState
@@ -19,8 +19,8 @@ from app.domain.models import (
 router = APIRouter(prefix="/api", tags=["process"])
 
 
-# Initialize JSON storage for persistence
-_storage = JSONStorage(base_path=Path(settings.temp_storage_path))
+# Use the same configured durable backend as uploads and processing.
+_storage = get_storage_backend()
 
 
 @router.post("/batches/{batch_id}/process", status_code=status.HTTP_202_ACCEPTED)
@@ -41,11 +41,17 @@ async def process_batch(batch_id: str):
     """
     batch_dir = Path(settings.temp_storage_path) / batch_id
     
-    if not batch_dir.exists():
+    batch_data = _storage.load_batch(batch_id)
+    if not batch_data and (settings.supabase_url or not batch_dir.exists()):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Batch {batch_id} not found"
         )
+
+    if batch_data and batch_data.get("commitment_records"):
+        raise HTTPException(409, "Batch already has extracted records; reprocessing could overwrite human review")
+    if settings.supabase_url and batch_data is not None and "documents" not in batch_data:
+        raise HTTPException(409, "Persistent original-document manifest missing; manual recovery required")
     
     # Check if already processing
     processor = get_processor()
@@ -62,6 +68,11 @@ async def process_batch(batch_id: str):
     
     # Start new processing job
     try:
+        if batch_data and batch_data.get("status") in ("queued", "processing") and not existing_job:
+            raise HTTPException(409, "Previous processing was interrupted; manual recovery required")
+        if batch_data:
+            batch_data["status"] = "queued"
+            _storage.save_batch(batch_id, batch_data)
         job = processor.start_processing(batch_id)
         
         return {
@@ -139,7 +150,7 @@ async def get_batch_status(batch_id: str):
     
     # Check if batch directory exists (uploaded but not processed)
     batch_dir = Path(settings.temp_storage_path) / batch_id
-    if batch_dir.exists():
+    if not settings.supabase_url and batch_dir.exists():
         return {
             "batch_id": batch_id,
             "status": "uploaded",

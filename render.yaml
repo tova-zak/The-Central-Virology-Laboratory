@@ -1,57 +1,62 @@
-# Render deployment configuration
-# Budget: ₪0 (Free Tier only)
-
+# Protected synthetic demo only. Manual deployment requires approval.
 services:
-  # Backend API
   - type: web
     name: virology-lab-backend
-    env: python
-    region: frankfurt  # or oregon, singapore
-    plan: free
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    runtime: docker
     rootDir: backend
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.13.0
-      - key: GEMINI_API_KEY
-        sync: false  # User must set manually in Render dashboard
-      - key: GEMINI_MODEL
-        value: gemini-3.5-flash-lite
-      - key: APP_NAME
-        value: Virology Lab API
-      - key: APP_VERSION
-        value: 1.0.0-mvp
-      - key: TEMP_STORAGE_PATH
-        value: /opt/render/project/src/temp_storage
-      - key: CORS_ORIGINS
-        value: https://virology-lab-frontend.onrender.com,http://localhost:5173
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    branch: integration/final-mvp
+    plan: free
+    region: frankfurt
     healthCheckPath: /health
-    autoDeploy: false  # Manual deploy only
-
-  # Frontend (Static Site)
+    autoDeploy: false
+    envVars:
+      - key: DEPLOYMENT_MODE
+        value: cloud
+      - key: DEMO_MODE
+        value: "true"
+      - key: HYBRID_ENGINE_ENABLED
+        value: "false"
+      - key: HYBRID_ENABLE_PREPROCESSING
+        value: "false"
+      - key: HYBRID_ENABLE_OCR
+        value: "false"
+      - key: HYBRID_ENABLE_HYBRID_VERIFICATION
+        value: "false"
+      - key: HYBRID_ENABLE_FOCUSED_RETRY
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET_NAME
+        sync: false
+      - key: API_USERNAME
+        sync: false
+      - key: API_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
   - type: web
     name: virology-lab-frontend
-    env: static
-    region: frankfurt
-    plan: free
-    buildCommand: cd frontend && npm install && npm run build
-    staticPublishPath: frontend/dist
+    runtime: static
+    branch: integration/final-mvp
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    autoDeploy: false
+    envVars:
+      - key: VITE_API_URL
+        sync: false
     headers:
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
       - path: /*
-        name: X-Frame-Options
-        value: DENY
-      - path: /*
-        name: X-XSS-Protection
-        value: 1; mode=block
+        name: Referrer-Policy
+        value: no-referrer
     routes:
       - type: rewrite
         source: /*
-        destination: /index.html  # SPA routing
-    envVars:
-      - key: VITE_API_URL
-        value: https://virology-lab-backend.onrender.com
-    autoDeploy: false
+        destination: /index.html

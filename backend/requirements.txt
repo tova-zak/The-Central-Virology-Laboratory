@@ -20,7 +20,8 @@ openpyxl
 
 # File Upload
 python-multipart
-python-magic-bin  # Windows-compatible magic number detection
+python-magic-bin; sys_platform == "win32"
+python-magic; sys_platform != "win32"
 
 # Image Preprocessing (Phase 1)
 opencv-python>=4.10.0  # Deskew, contrast, rotation correction

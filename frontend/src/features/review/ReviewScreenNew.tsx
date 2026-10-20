@@ -595,7 +595,12 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
             ].map(name => <th key={name}>{getFieldLabel(name)}</th>)}</tr></thead>
             <tbody>{batchData.commitment_records.map(record => (
               <tr key={record.commitment_record_id}>
-                <td>{record.form_id}</td>
+                <td>{record.form_id}
+                  <button onClick={() => {
+                    const source = record.form_id?.match(/^(.+)_page_(\d+)$/);
+                    if (source) setDocumentModal({ isOpen: true, documentId: source[1], pageIndex: Number(source[2]) });
+                  }}>View source</button>
+                </td>
                 {(['patient_first_name', 'patient_last_name', 'patient_id_number',
                    'sender', 'received_date', 'central_numbers', 'commitment_number'] as const).map(name => {
                   const field = record[name];
@@ -603,7 +608,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
                   return <td key={name}>
                     <span>{Array.isArray(value) ? value.join(', ') : value || '-'}</span>
                     <span>{field?.review_state === 'human_verified' ? ' (Approved) ' : ' (Review required) '}</span>
-                    <button onClick={() => openEditModal(record.commitment_record_id, name, value ?? '')}>
+                    <button onClick={() => openEditModal(record.commitment_record_id, name, value ?? (name === 'central_numbers' ? [] : ''))}>
                       Edit and approve
                     </button>
                   </td>;

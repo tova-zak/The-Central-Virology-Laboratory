@@ -1,130 +1,94 @@
-"""FastAPI application entry point."""
+"""FastAPI entry point for local development and the protected synthetic cloud demo."""
+from contextlib import asynccontextmanager
+import logging
+import os
+import re
 import truststore
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-
+from fastapi.responses import JSONResponse
 from app.core.config import settings
+from app.core.access import require_access
 from app.api import upload, process, documents
+from app.services.storage.storage_adapter import StorageConflict
 
-# Inject Windows SSL certificates
 truststore.inject_into_ssl()
 
-# Create FastAPI app
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    description="Virology Lab Commitment Extraction API",
-)
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@asynccontextmanager
+async def lifespan(app):
+    if os.getenv("RENDER") and settings.deployment_mode != "cloud":
+        raise RuntimeError("Render requires DEPLOYMENT_MODE=cloud")
+    if settings.deployment_mode == "cloud":
+        if not settings.demo_mode:
+            raise RuntimeError("Cloud MVP is restricted to DEMO_MODE synthetic data")
+        if not settings.api_username or len(settings.api_password) < 16:
+            raise RuntimeError("Cloud requires API_USERNAME and a strong API_PASSWORD")
+        if not settings.cors_origins or any(origin == "*" or not origin.startswith("https://")
+                                            for origin in settings.cors_origins):
+            raise RuntimeError("Cloud requires explicit HTTPS CORS_ORIGINS")
+    process._storage.check_ready()
+    yield
 
-# Include routers
-app.include_router(upload.router)
-app.include_router(process.router)
-app.include_router(documents.router)
+
+app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan,
+              docs_url=None if settings.deployment_mode == "cloud" else "/docs",
+              redoc_url=None if settings.deployment_mode == "cloud" else "/redoc",
+              openapi_url=None if settings.deployment_mode == "cloud" else "/openapi.json")
+
+
+@app.middleware("http")
+async def storage_errors_and_ids(request: Request, call_next):
+    parts = request.url.path.split("/")
+    if len(parts) > 3 and parts[1:3] == ["api", "batches"]:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", parts[3]):
+            return JSONResponse({"detail": "Invalid batch identifier"}, status_code=400)
+    try:
+        response = await call_next(request)
+    except StorageConflict:
+        response = JSONResponse({"detail": "Batch changed; reload before retrying"}, status_code=409)
+    except Exception:
+        # Never emit provider errors, credentials or request/patient values.
+        logging.getLogger(__name__).error("Request failed during processing or persistence")
+        response = JSONResponse({"detail": "Operation failed; persistence unavailable or invalid data"}, status_code=503)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+# Wrap failure responses as well so the frontend can read persistence errors.
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
+                   allow_credentials=True, allow_methods=["GET", "POST", "PATCH"],
+                   allow_headers=["Content-Type", "Authorization"])
+
+
+for router in (upload.router, process.router, documents.router):
+    app.include_router(router, dependencies=[Depends(require_access)])
+
+
+@app.get("/api/session", dependencies=[Depends(require_access)])
+async def session():
+    return {"authenticated": True}
 
 
 @app.get("/health")
 async def health_check():
-    """Enhanced health check - verifies readiness without exposing secrets.
-    
-    Checks:
-    - Tesseract OCR availability (with Hebrew language pack)
-    - Storage backend reachable and writable
-    - Gemini API key configured (boolean only, never the value)
-    
-    Returns HTTP 200 if healthy, 503 if any check fails.
-    """
-    from pathlib import Path
-    import os
-    
     checks = {}
-    overall_healthy = True
-    
-    # Check 1: Tesseract OCR
     try:
-        import pytesseract
-        tesseract_cmd = os.getenv("TESSERACT_CMD", "/usr/bin/tesseract")
-        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-        
-        # Verify Hebrew language pack
-        langs = pytesseract.get_languages()
-        has_hebrew = 'heb' in langs
-        has_english = 'eng' in langs
-        
-        checks["tesseract"] = {
-            "available": True,
-            "hebrew": has_hebrew,
-            "english": has_english
-        }
-        
-        if not (has_hebrew and has_english):
-            overall_healthy = False
-            
-    except Exception as e:
-        checks["tesseract"] = {"available": False, "error": "not_installed"}
-        overall_healthy = False
-    
-    # Check 2: Storage backend writable
-    try:
-        storage_path = Path(settings.temp_storage_path)
-        storage_path.mkdir(parents=True, exist_ok=True)
-        
-        # Try to write test file
-        test_file = storage_path / ".health_check"
-        test_file.write_text("ok")
-        test_file.unlink()
-        
-        checks["storage"] = {"writable": True}
-        
-    except Exception as e:
-        checks["storage"] = {"writable": False, "error": "not_writable"}
-        overall_healthy = False
-    
-    # Check 3: Gemini API key configured (boolean only)
-    try:
-        has_key = bool(settings.gemini_api_key)
-        demo_mode = settings.demo_mode
-        
-        # In demo mode, key not required
-        key_ok = has_key or demo_mode
-        
-        checks["gemini"] = {
-            "configured": has_key,  # Boolean: is key set?
-            "demo_mode": demo_mode  # Boolean: using mock?
-        }
-        
-        if not key_ok:
-            overall_healthy = False
-            
-    except Exception as e:
-        checks["gemini"] = {"configured": False, "error": "config_error"}
-        overall_healthy = False
-    
-    # Return 503 if unhealthy, 200 if healthy
-    status_code = 200 if overall_healthy else 503
-    
-    from fastapi import Response
-    return Response(
-        content=f'{{"status": "{"healthy" if overall_healthy else "unhealthy"}", "checks": {checks}}}',
-        status_code=status_code,
-        media_type="application/json"
-    )
+        process._storage.check_ready()
+        checks["storage"] = "ready"
+    except Exception:
+        checks["storage"] = "unavailable"
+    healthy = checks["storage"] == "ready"
+    return JSONResponse({"status": "healthy" if healthy else "unhealthy", "checks": checks,
+                         "service": settings.app_name, "version": settings.app_version,
+                         "demo_mode": settings.demo_mode,
+                         "model": "synthetic mock" if settings.demo_mode else "configured extractor",
+                         "requires_auth": settings.deployment_mode == "cloud" or bool(settings.supabase_url or settings.api_password)},
+                        status_code=200 if healthy else 503)
 
 
 @app.get("/")
 async def root():
-    """Root endpoint with API information."""
-    return {
-        "message": "Virology Lab Commitment Extraction API",
-        "version": settings.app_version,
-        "docs": "/docs",
-        "health": "/health",
-    }
+    return {"message": settings.app_name, "version": settings.app_version,
+            "demo_mode": settings.demo_mode, "health": "/health"}

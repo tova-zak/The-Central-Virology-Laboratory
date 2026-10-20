@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import './App.css'
-import { healthCheck, HealthResponse } from './services/api'
+import { healthCheck, HealthResponse, apiClient } from './services/api'
 import { WorkflowScreen } from './features/workflow/WorkflowScreen'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
@@ -8,6 +8,24 @@ function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authenticated, setAuthenticated] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+
+  const signIn = async (event: FormEvent) => {
+    event.preventDefault()
+    apiClient.defaults.auth = { username, password }
+    try {
+      await apiClient.get('/api/session')
+      setAuthenticated(true)
+      setPassword('')
+      setLoginError('')
+    } catch {
+      delete apiClient.defaults.auth
+      setLoginError('Sign-in failed. Check credentials and connection.')
+    }
+  }
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -83,7 +101,17 @@ function App() {
                 </div>
               </div>
 
-              <WorkflowScreen />
+              {health.demo_mode && <p role="status">DEMO MODE — synthetic extraction only. Upload synthetic documents only.</p>}
+              {health.requires_auth && !authenticated ? (
+                <form onSubmit={signIn}>
+                  <label>Username <input autoComplete="username" value={username}
+                    onChange={event => setUsername(event.target.value)} required /></label>
+                  <label>Password <input type="password" autoComplete="current-password" value={password}
+                    onChange={event => setPassword(event.target.value)} required /></label>
+                  <button type="submit">Sign in</button>
+                  {loginError && <p role="alert">{loginError}</p>}
+                </form>
+              ) : <WorkflowScreen />}
             </>
           )}
         </main>

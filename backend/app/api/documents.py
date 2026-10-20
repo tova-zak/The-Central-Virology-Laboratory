@@ -2,9 +2,10 @@
 import re
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from app.core.config import settings
+from app.services.storage import get_storage_backend
 
 
 router = APIRouter(prefix="/api", tags=["documents"])
@@ -56,6 +57,21 @@ async def get_document(batch_id: str, document_id: str):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid document_id format: {document_id}"
         )
+
+    storage = get_storage_backend()
+    batch = storage.load_batch(batch_id)
+    if batch is not None and "documents" in batch:
+        document = next((d for d in batch["documents"] if d["document_id"] == document_id), None)
+        if document is None:
+            raise HTTPException(404, "Document not found in batch")
+        name = document["storage_name"]
+        content = storage.download_file(batch_id, name)
+        return Response(content, media_type=ALLOWED_MIMES[Path(name).suffix],
+                        headers={"Content-Disposition": f'inline; filename="{name}"',
+                                 "Cache-Control": "no-store"})
+    # Legacy local batches only; cloud never falls back to ephemeral disk.
+    if settings.supabase_url or settings.deployment_mode == "cloud":
+        raise HTTPException(404, "Persistent document manifest not found")
     
     # Construct batch directory path
     batch_dir = Path(settings.temp_storage_path) / batch_id

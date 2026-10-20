@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional
 from datetime import datetime
 from enum import Enum
+from tempfile import TemporaryDirectory
 
 from app.core.config import settings
 from app.core.hybrid_config import get_hybrid_config
@@ -17,7 +18,7 @@ from app.services.documents.renderer import DocumentRenderer
 from app.services.extraction.gemini_adapter import GeminiExtractor
 from app.services.extraction.quota_manager import get_quota_manager, parse_gemini_error
 from app.services.validation import validator
-from app.services.storage import JSONStorage
+from app.services.storage import get_storage_backend
 from app.domain.models import TestRecord, FieldValue, ExtractionState, ReviewState, LogicalForm, Sample, CommitmentRecord
 
 
@@ -57,7 +58,7 @@ class BackgroundProcessor:
     
     def __init__(self):
         self._jobs: Dict[str, ProcessingJob] = {}
-        self._storage = JSONStorage(base_path=Path(settings.temp_storage_path))
+        self._storage = get_storage_backend()
         self._renderer = DocumentRenderer(dpi=300, max_dimension=3000)
         
         # Load hybrid engine config
@@ -224,11 +225,27 @@ class BackgroundProcessor:
         batch_id = job.batch_id
         job.status = ProcessingStatus.PROCESSING
         job.started_at = datetime.utcnow()
+        workspace = TemporaryDirectory(prefix="virology-processing-")
+        batch_data = {}
         
         try:
             logger.info(f"[{batch_id}] Starting batch processing")
             
+            batch_data = self._storage.load_batch(batch_id) or {}
+            if batch_data.get("commitment_records"):
+                raise ValueError("Refusing to overwrite previously extracted or reviewed records")
+            if settings.supabase_url and "documents" not in batch_data:
+                raise ValueError("Persistent original-document manifest missing")
             batch_dir = Path(settings.temp_storage_path) / batch_id
+            if "documents" in batch_data:
+                batch_data["status"] = "processing"
+                self._storage.save_batch(batch_id, batch_data)
+                batch_dir = Path(workspace.name)
+                for document in batch_data["documents"]:
+                    name = document["storage_name"]
+                    from app.services.storage.storage_adapter import validate_storage_name
+                    validate_storage_name(name)
+                    (batch_dir / name).write_bytes(self._storage.download_file(batch_id, name))
             
             if not batch_dir.exists():
                 raise FileNotFoundError(f"Batch directory not found: {batch_id}")
@@ -306,6 +323,8 @@ class BackgroundProcessor:
                                 "page_index": page_index,
                                 "error": error_msg
                             })
+                            commitment_records.append(self._create_pending_commitment_from_error(
+                                document_id, page_index, "Extraction timed out"))
                         
                         except Exception as e:
                             import traceback
@@ -318,9 +337,9 @@ class BackgroundProcessor:
                                 f"extractor_class={self._extractor.__class__.__name__}, "
                                 f"demo_mode={settings.demo_mode}, "
                                 f"exception_type={type(e).__name__}, "
-                                f"message={str(e)}"
+                                f"exception details withheld"
                             )
-                            logger.debug(f"Stack trace:\n{traceback.format_exc()}")
+                            logger.debug("Page processing failed; exception details withheld")
                             
                             # Check if quota exhausted (ONLY check string, do NOT reference undefined variables)
                             error_str = str(e).lower()
@@ -348,7 +367,7 @@ class BackgroundProcessor:
                             
                             # For other errors, create a pending commitment record
                             try:
-                                error_msg = str(e)
+                                error_msg = "Page extraction failed; manual review required"
                                 logger.error(f"[{batch_id}][{document_id}] Page {page_index} failed: {error_msg}, creating pending record")
                                 
                                 # Create a commitment record flagged for human review
@@ -365,7 +384,7 @@ class BackgroundProcessor:
                             errors.append({
                                 "document_id": document_id,
                                 "page_index": page_index,
-                                "error": str(e),
+                                "error": "Page extraction failed; manual review required",
                                 "error_type": type(e).__name__
                             })
                     
@@ -374,7 +393,7 @@ class BackgroundProcessor:
                         break
                 
                 except Exception as e:
-                    error_msg = f"Failed to process document: {str(e)}"
+                    error_msg = "Failed to process document"
                     logger.error(f"[{batch_id}][{document_id}] {error_msg}")
                     errors.append({
                         "document_id": document_id,
@@ -394,9 +413,10 @@ class BackgroundProcessor:
             
             # Save results to persistent storage
             batch_result = {
+                **batch_data,
                 "batch_id": batch_id,
                 "status": job.status.value,
-                "commitment_records": [c.model_dump() for c in commitment_records],
+                "commitment_records": [c.model_dump(mode="json") for c in commitment_records],
                 "statistics": {
                     "total_pages": len(commitment_records),  # One page = one commitment
                     "total_commitments": len(commitment_records),
@@ -424,22 +444,28 @@ class BackgroundProcessor:
         
         except Exception as e:
             job.status = ProcessingStatus.FAILED
-            job.error = str(e)
+            job.error = "Processing or persistence failed"
             job.completed_at = datetime.utcnow()
             
-            logger.error(f"[{batch_id}] Processing failed: {e}")
+            logger.error(f"[{batch_id}] Processing failed; details withheld")
             
             # Save error state
             error_result = {
+                **batch_data,
                 "batch_id": batch_id,
                 "status": "failed",
                 "test_records": [],
-                "commitment_records": [],
-                "errors": [{"error": str(e)}],
+                "commitment_records": batch_data.get("commitment_records", []),
+                "errors": [{"error": "Processing or persistence failed; manual recovery required"}],
                 "processed_count": 0,
                 "error_count": 1
             }
-            self._storage.save_batch(batch_id, error_result)
+            try:
+                self._storage.save_batch(batch_id, error_result)
+            except Exception:
+                logger.error("Batch failure state could not be persisted")
+        finally:
+            workspace.cleanup()
     
     def _create_commitment_from_page(
         self,
@@ -498,7 +524,7 @@ class BackgroundProcessor:
                 review_state=ReviewState.needs_review
             )
             logger.warning(
-                f"Page {page_index} has multiple commitment numbers: {commitment_numbers}. "
+                f"Page {page_index} has multiple commitment candidates. "
                 f"Using first one and flagging for review."
             )
         
@@ -910,7 +936,7 @@ class BackgroundProcessor:
                 if is_quota_exhausted:
                     # Daily quota exhausted - STOP ALL RETRIES
                     logger.error(
-                        f"[{document_id}] Daily quota exhausted detected: {e}"
+                        f"[{document_id}] Daily quota exhausted"
                     )
                     quota_manager.mark_quota_exhausted(
                         model=model,
@@ -927,7 +953,7 @@ class BackgroundProcessor:
                 # Check for transient errors (rate limit, 503, timeout)
                 if "429" in error_str or "503" in error_str or "timeout" in error_str:
                     last_exception = e
-                    logger.warning(f"[{document_id}] Transient error (attempt {attempt + 1}): {e}")
+                    logger.warning(f"[{document_id}] Transient error (attempt {attempt + 1})")
                     
                     if attempt < self._max_retries:
                         # Exponential backoff for rate limits
@@ -938,7 +964,7 @@ class BackgroundProcessor:
                         raise last_exception
                 else:
                     # Permanent error - don't retry
-                    logger.error(f"[{document_id}] Permanent error: {e}")
+                    logger.error(f"[{document_id}] Permanent extraction error")
                     raise
         
         # Should not reach here

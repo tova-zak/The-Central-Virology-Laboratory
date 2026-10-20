@@ -17,8 +17,17 @@ Usage:
 """
 from pathlib import Path
 from typing import Dict, Any, Optional, Protocol
-import os
-import json
+from datetime import datetime, timezone
+import re
+
+
+class StorageConflict(RuntimeError):
+    """A concurrent writer changed this batch; reload before retrying."""
+
+
+def validate_storage_name(value: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9]+)?", value):
+        raise ValueError("Invalid storage identifier")
 
 
 class StorageBackend(Protocol):
@@ -42,6 +51,15 @@ class StorageBackend(Protocol):
     
     def delete_batch(self, batch_id: str) -> bool:
         """Delete batch."""
+        ...
+
+    def upload_file(self, batch_id: str, file_name: str, file_bytes: bytes) -> str:
+        ...
+
+    def download_file(self, batch_id: str, file_name: str) -> bytes:
+        ...
+
+    def check_ready(self) -> None:
         ...
 
 
@@ -90,30 +108,35 @@ class SupabaseStorageAdapter:
     
     def save_batch(self, batch_id: str, batch_data: Dict[str, Any]) -> None:
         """Save batch data to Supabase Postgres JSONB."""
-        from datetime import datetime
-        
-        # Add metadata
-        if "saved_at" not in batch_data:
-            batch_data["saved_at"] = datetime.utcnow().isoformat()
-        
-        # Upsert to batches table
-        result = self.client.table("batches").upsert({
+        validate_storage_name(batch_id)
+        version = batch_data.get("_storage_version")
+        now = datetime.now(timezone.utc).isoformat()
+        payload = {k: v for k, v in batch_data.items() if k != "_storage_version"}
+        payload.setdefault("saved_at", now)
+        row = {
             "batch_id": batch_id,
-            "batch_data": batch_data,
-            "updated_at": datetime.utcnow().isoformat()
-        }).execute()
-        
+            "batch_data": payload,
+            "updated_at": now,
+        }
+        table = self.client.table("batches")
+        # Never upsert stale data over human corrections.
+        if version is None:
+            result = table.insert(row).execute()
+        else:
+            result = table.update(row).eq("batch_id", batch_id).eq("updated_at", version).execute()
         if not result.data:
-            raise RuntimeError(f"Failed to save batch {batch_id} to Supabase")
+            raise StorageConflict("Batch changed during save; reload and retry")
+        batch_data["_storage_version"] = result.data[0]["updated_at"]
     
     def load_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
         """Load batch data from Supabase Postgres."""
-        result = self.client.table("batches").select("batch_data").eq("batch_id", batch_id).execute()
+        validate_storage_name(batch_id)
+        result = self.client.table("batches").select("batch_data,updated_at").eq("batch_id", batch_id).execute()
         
         if not result.data:
             return None
         
-        return result.data[0]["batch_data"]
+        return {**result.data[0]["batch_data"], "_storage_version": result.data[0]["updated_at"]}
     
     def batch_exists(self, batch_id: str) -> bool:
         """Check if batch exists in Supabase."""
@@ -133,8 +156,10 @@ class SupabaseStorageAdapter:
     def upload_file(self, batch_id: str, file_name: str, file_bytes: bytes) -> str:
         """Upload file to Supabase Storage bucket.
         
-        Returns: Public URL or path to the uploaded file.
+        Returns: Private object path; never a public URL.
         """
+        validate_storage_name(batch_id)
+        validate_storage_name(file_name)
         file_path = f"{batch_id}/{file_name}"
         
         result = self.client.storage.from_(self.bucket_name).upload(
@@ -142,16 +167,29 @@ class SupabaseStorageAdapter:
             file=file_bytes,
             file_options={"content-type": "application/octet-stream"}
         )
+        if not result:
+            raise RuntimeError("Original document upload failed")
         
         return file_path
     
     def download_file(self, batch_id: str, file_name: str) -> bytes:
         """Download file from Supabase Storage bucket."""
+        validate_storage_name(batch_id)
+        validate_storage_name(file_name)
         file_path = f"{batch_id}/{file_name}"
         
         result = self.client.storage.from_(self.bucket_name).download(file_path)
-        
+        if not isinstance(result, bytes) or not result:
+            raise RuntimeError("Original document download failed")
         return result
+
+    def check_ready(self):
+        """Read-only schema access and private-bucket check; no patient rows read."""
+        self.client.table("batches").select("batch_id,batch_data,updated_at").limit(0).execute()
+        bucket = self.client.storage.get_bucket(self.bucket_name)
+        public = bucket.get("public") if isinstance(bucket, dict) else getattr(bucket, "public", None)
+        if public is not False:
+            raise RuntimeError("Configured Supabase bucket must be private")
 
 
 def get_storage_backend() -> StorageBackend:
@@ -163,6 +201,10 @@ def get_storage_backend() -> StorageBackend:
     """
     from app.core.config import settings
     
+    if settings.deployment_mode == "cloud" and not (settings.supabase_url and settings.supabase_service_key):
+        raise ValueError("Cloud mode requires SUPABASE_URL and SUPABASE_SERVICE_KEY")
+    if bool(settings.supabase_url) != bool(settings.supabase_service_key):
+        raise ValueError("Set both SUPABASE_URL and SUPABASE_SERVICE_KEY")
     if settings.supabase_url:
         # Cloud mode: use Supabase
         return SupabaseStorageAdapter()

@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, status
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.services.storage import get_storage_backend
 
 
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -82,10 +83,9 @@ async def upload_files(files: List[UploadFile] = File(...)):
     
     # Generate batch ID
     batch_id = f"batch_{uuid.uuid4().hex[:12]}"
-    batch_dir = Path(settings.temp_storage_path) / batch_id
-    batch_dir.mkdir(parents=True, exist_ok=True)
-    
+    storage = get_storage_backend()
     documents = []
+    manifest = []
     
     for file in files:
         # Read file content
@@ -116,12 +116,12 @@ async def upload_files(files: List[UploadFile] = File(...)):
         
         # Generate document ID and save file
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
-        file_ext = get_file_extension(file.filename or ".pdf")
-        file_path = batch_dir / f"{doc_id}{file_ext}"
-        
-        # Write file to storage
-        with open(file_path, "wb") as f:
-            f.write(content)
+        # Use detected content rather than an untrusted filename extension.
+        file_ext = next(ext for magic, ext in ((b"%PDF", ".pdf"), (b"\x89PNG", ".png"),
+                                               (b"\xff\xd8\xff", ".jpg")) if content.startswith(magic))
+        storage.upload_file(batch_id, f"{doc_id}{file_ext}", content)
+        manifest.append({"document_id": doc_id, "storage_name": f"{doc_id}{file_ext}",
+                         "size_bytes": file_size})
         
         documents.append(DocumentInfo(
             document_id=doc_id,
@@ -129,6 +129,10 @@ async def upload_files(files: List[UploadFile] = File(...)):
             size_bytes=file_size
         ))
     
+    # A successful upload means originals AND batch metadata are durable.
+    storage.save_batch(batch_id, {"batch_id": batch_id, "status": "uploaded",
+                                "documents": manifest, "test_records": [], "commitment_records": [],
+                                "errors": [], "demo_mode": settings.demo_mode})
     return BatchResponse(
         batch_id=batch_id,
         documents=documents

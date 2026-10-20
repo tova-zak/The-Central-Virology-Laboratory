@@ -45,6 +45,27 @@ class JSONStorage:
         
         # Atomic rename
         temp_file.replace(batch_file)
+
+    def upload_file(self, batch_id: str, file_name: str, file_bytes: bytes) -> str:
+        from .storage_adapter import validate_storage_name
+        validate_storage_name(batch_id)
+        validate_storage_name(file_name)
+        directory = self.base_path / batch_id
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / file_name
+        with target.open("xb") as handle:
+            handle.write(file_bytes)
+        return f"{batch_id}/{file_name}"
+
+    def download_file(self, batch_id: str, file_name: str) -> bytes:
+        from .storage_adapter import validate_storage_name
+        validate_storage_name(batch_id)
+        validate_storage_name(file_name)
+        return (self.base_path / batch_id / file_name).read_bytes()
+
+    def check_ready(self):
+        if not self.batches_dir.is_dir():
+            raise RuntimeError("Local storage unavailable")
     
     def load_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
         """Load batch data from JSON file.

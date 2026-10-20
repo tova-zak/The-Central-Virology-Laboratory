@@ -16,6 +16,15 @@ export const apiClient = axios.create({
   },
 });
 
+// Existing callers may log request errors; never include demo credentials there.
+apiClient.interceptors.response.use(response => response, error => {
+  if (error.config) {
+    delete error.config.auth;
+    delete error.config.headers?.Authorization;
+  }
+  return Promise.reject(error);
+});
+
 // Types - Domain Models
 export interface FieldValue<T = any> {
   raw_value: T | null;
@@ -107,6 +116,7 @@ export interface ProcessingError {
 
 // API Response Types
 export interface HealthResponse {
+  requires_auth?: boolean;
   status: string;
   service: string;
   version: string;

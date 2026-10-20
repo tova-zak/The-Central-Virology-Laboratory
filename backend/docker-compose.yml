@@ -15,7 +15,8 @@ services:
       - DEMO_MODE=${DEMO_MODE:-true}
       - HYBRID_ENGINE_ENABLED=true
       - TEMP_STORAGE_PATH=/app/temp_storage
-      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+      - 'CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]'
+      - DEPLOYMENT_MODE=local
       - TESSERACT_CMD=/usr/bin/tesseract
     # Render Free tier constraints
     mem_limit: 512m

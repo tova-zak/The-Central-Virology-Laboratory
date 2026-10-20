@@ -27,6 +27,7 @@ htmlcov/
 # Storage (ephemeral, will be created at runtime)
 temp_storage/
 *.json
+!app/data/sending_institutions.json
 
 # Logs
 *.log
@@ -52,3 +53,13 @@ docs/
 dist/
 build/
 *.egg-info/
+
+# Never package uploaded documents, generated exports or local processing caches
+temp/
+*.pdf
+*.xlsx
+*.xls
+*.png
+*.jpg
+*.jpeg
+.agents/

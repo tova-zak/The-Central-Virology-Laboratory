@@ -5,7 +5,7 @@
  * Supports PDF documents and image files with proper blob handling.
  */
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { apiClient } from '../../services/api';
 import './ReviewScreen.css';
 
 // Get API base URL from environment
@@ -44,7 +44,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
     const loadDocument = async () => {
       try {
         const url = `${API_BASE_URL}/api/batches/${batchId}/documents/${documentId}`;
-        const response = await axios.get(url, {
+        const response = await apiClient.get(url, {
           responseType: 'blob',
           timeout: 30000,
         });
@@ -59,7 +59,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
         setContentType(typeof ct === 'string' ? ct : 'application/octet-stream');
         setIsLoading(false);
       } catch (err: any) {
-        console.error('Failed to load document:', err);
+        console.error('Failed to load document');
         setError(err.response?.status === 404 
           ? 'המסמך לא נמצא במערכת.'
           : 'שגיאה בטעינת המסמך. נסה שוב מאוחר יותר.');

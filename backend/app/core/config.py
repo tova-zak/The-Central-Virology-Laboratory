@@ -1,5 +1,6 @@
 """Application configuration management using Pydantic Settings."""
 from pathlib import Path
+from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +42,9 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
     supabase_bucket_name: str = "virology-lab-uploads"
+    deployment_mode: Literal["local", "cloud"] = "local"
+    api_username: str = ""
+    api_password: str = ""
     
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent.parent / ".env",
