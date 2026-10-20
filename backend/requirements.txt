@@ -29,6 +29,9 @@ numpy>=1.26.0  # Required by opencv
 # OCR Layer (Phase 2)
 pytesseract>=0.3.13  # Tesseract OCR wrapper for verification
 
+# Database & Storage
+supabase==2.33.0  # Supabase Python client for Postgres + Storage
+
 # Testing
 pytest
 pytest-asyncio
