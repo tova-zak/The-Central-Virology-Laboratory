@@ -76,5 +76,11 @@ class Extractor(ABC):
 
 
 class ExtractionError(Exception):
-    """Base exception for extraction failures."""
-    pass
+    """Provider-independent failure metadata. Messages must never contain provider payloads."""
+    def __init__(self, message: str, *, code: str = "extraction_failed", retryable: bool = False,
+                 retry_after_seconds: float | None = None, diagnostics: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
+        self.diagnostics = diagnostics or {}

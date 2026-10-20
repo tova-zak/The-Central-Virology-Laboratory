@@ -1,13 +1,41 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import './App.css'
-import { healthCheck, HealthResponse } from './services/api'
-import { UploadForm } from './features/upload/UploadForm'
+import { healthCheck, HealthResponse, apiClient } from './services/api'
+import { WorkflowScreen } from './features/workflow/WorkflowScreen'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [lastBatchId, setLastBatchId] = useState<string | null>(null)
+  const [authenticated, setAuthenticated] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
+
+  useEffect(() => {
+    const requireSignIn = () => setAuthenticated(false)
+    window.addEventListener('api-auth-required', requireSignIn)
+    return () => window.removeEventListener('api-auth-required', requireSignIn)
+  }, [])
+
+  const signIn = async (event: FormEvent) => {
+    event.preventDefault()
+    setSigningIn(true)
+    apiClient.defaults.auth = { username, password }
+    try {
+      await apiClient.get('/api/session')
+      setAuthenticated(true)
+      setPassword('')
+      setLoginError('')
+    } catch {
+      delete apiClient.defaults.auth
+      setLoginError('Sign-in failed. Check credentials and connection.')
+    } finally {
+      setSigningIn(false)
+    }
+  }
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -16,7 +44,7 @@ function App() {
         setHealth(data)
         setError(null)
       } catch (err) {
-        setError('שגיאה בחיבור ל-Backend')
+        setError('Failed to connect to Backend')
         console.error('Health check failed:', err)
       } finally {
         setLoading(false)
@@ -26,66 +54,83 @@ function App() {
     checkHealth()
   }, [])
 
-  const handleUploadSuccess = (batchId: string) => {
-    setLastBatchId(batchId)
-  }
-
   return (
-    <div className="app">
-      <h1>מערכת חילוץ התחייבויות - המעבדה המרכזית לנגיפים</h1>
-      
-      {loading && <p>בודק חיבור...</p>}
-      
-      {error && (
-        <div style={{ color: 'red', padding: '1rem', border: '1px solid red', borderRadius: '4px' }}>
-          <strong>שגיאה:</strong> {error}
-        </div>
-      )}
-      
-      {health && (
-        <div style={{ 
-          padding: '1rem', 
-          border: '1px solid green', 
-          borderRadius: '4px',
-          backgroundColor: '#f0fff0',
-          marginBottom: '2rem'
-        }}>
-          <h2>✅ המערכת פעילה</h2>
-          <ul style={{ textAlign: 'right', listStyle: 'none' }}>
-            <li><strong>שירות:</strong> {health.service}</li>
-            <li><strong>גרסה:</strong> {health.version}</li>
-            <li><strong>מודל AI:</strong> {health.model}</li>
-            <li><strong>סטטוס:</strong> {health.status}</li>
-          </ul>
-        </div>
-      )}
-
-      {health && !loading && (
-        <>
-          <h2>העלאת קבצים</h2>
-          <UploadForm onUploadSuccess={handleUploadSuccess} />
-          
-          {lastBatchId && (
-            <div style={{ 
-              marginTop: '2rem',
-              padding: '1rem',
-              border: '1px solid #2196F3',
-              borderRadius: '4px',
-              backgroundColor: '#e3f2fd'
+    <ErrorBoundary>
+      <div className="app">
+        {/* Tzalul Header */}
+        <header className="tzalul-header">
+          <div className="tzalul-header-brand">
+            <div className="tzalul-header-text">
+              <h1 className="tzalul-header-title">המעבדה המרכזית לנגיפים</h1>
+              <p className="tzalul-header-subtitle">סביבת בדיקת נתונים · צלול</p>
+            </div>
+            {/* Logo placeholder - will be added when logo file is provided */}
+            <div className="tzalul-logo-placeholder" style={{
+              width: '48px',
+              height: '48px',
+              background: 'var(--primary)',
+              borderRadius: 'var(--radius-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'white',
+              fontWeight: 'bold',
+              fontSize: '24px'
             }}>
-              <p><strong>Batch ID האחרון:</strong> {lastBatchId}</p>
-              <p style={{ fontSize: '0.9em', color: '#666' }}>
-                (עיבוד יתווסף ב-TASK-013)
-              </p>
+              צ
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <main className="app-main">
+          {loading && (
+            <div className="status-box loading-box">
+              <p>בודק חיבור למערכת...</p>
             </div>
           )}
-        </>
-      )}
-      
-      <p style={{ marginTop: '2rem', color: '#666' }}>
-        מערכת MVP בשלבי פיתוח - Hackathon 2026
-      </p>
-    </div>
+          
+          {error && (
+            <div className="status-box error-box">
+              <strong>⚠ שגיאת חיבור:</strong> {error}
+              <p className="hint">ודא שהשרת פועל על פורט 8000</p>
+            </div>
+          )}
+          
+          {health && (
+            <>
+              <div className="status-box success-box">
+                <div className="status-content">
+                  <h3>✓ המערכת פעילה</h3>
+                  <div className="status-details">
+                    <span><strong>שירות:</strong> {health.service}</span>
+                    <span><strong>גרסה:</strong> {health.version}</span>
+                    <span><strong>מודל AI:</strong> {health.model}</span>
+                    <span><strong>סטטוס:</strong> {health.status}</span>
+                  </div>
+                </div>
+              </div>
+
+              {health.demo_mode && <p role="status">DEMO MODE — synthetic extraction only. Upload synthetic documents only.</p>}
+              {health.environment === 'staging-real' && <p role="status">
+                RESTRICTED STAGING — real Gemini extraction. Only synthetic or institutionally approved
+                non-sensitive documents. Clinical data is prohibited.
+              </p>}
+              {health.requires_auth && !authenticated ? (
+                <form onSubmit={signIn}>
+                  <label>Username <input autoComplete="username" value={username}
+                    onChange={event => setUsername(event.target.value)} required /></label>
+                  <label>Password <input type="password" autoComplete="current-password" value={password}
+                    onChange={event => setPassword(event.target.value)} required /></label>
+                  <button type="submit" disabled={signingIn}>{signingIn ? 'Signing in...' : 'Sign in'}</button>
+                  {loginError && <p role="alert">{loginError}</p>}
+                </form>
+              ) : <WorkflowScreen />}
+            </>
+          )}
+        </main>
+      </div>
+    </ErrorBoundary>
   )
 }
 

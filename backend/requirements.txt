@@ -20,7 +20,18 @@ openpyxl
 
 # File Upload
 python-multipart
-python-magic-bin  # Windows-compatible magic number detection
+python-magic-bin; sys_platform == "win32"
+python-magic; sys_platform != "win32"
+
+# Image Preprocessing (Phase 1)
+opencv-python>=4.10.0  # Deskew, contrast, rotation correction
+numpy>=1.26.0  # Required by opencv
+
+# OCR Layer (Phase 2)
+pytesseract>=0.3.13  # Tesseract OCR wrapper for verification
+
+# Database & Storage
+supabase==2.33.0  # Supabase Python client for Postgres + Storage
 
 # Testing
 pytest

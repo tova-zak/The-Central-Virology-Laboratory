@@ -1,122 +1,251 @@
 # Virology Lab Commitment Extraction System
 
-**Status:** MVP Development (7-day hackathon)  
-**Budget:** 0 ₪ (Gemini Free Tier only)
+**Hackathon MVP - Ministry of Health**  
+**Budget: ₪0 | Timeline: 7 Days | Status: ✅ Complete & Deployment-Ready**
 
-## Project Description
+Automated extraction of commitment data from virology lab forms using Gemini AI (Free Tier).
 
-Automated extraction system for commitment forms from the Central Virology Laboratory. Processes PDF/image documents containing Hebrew and English text, handwriting, stamps, and stickers to extract structured data for regulatory reporting.
+---
 
-## Tech Stack
+## 🎯 Quick Links
 
-### Backend
-- **Python 3.10+**
-- **FastAPI** — API framework
-- **Pydantic** — Data validation
-- **Google Gemini Vision API** — AI extraction (Free Tier)
-- **PyMuPDF** — PDF processing
-- **openpyxl** — Excel export
+- **[MVP Validation Report](docs/MVP_VALIDATION_REPORT.md)** - Test results and limitations
+- **[Cloud Deployment Guide](docs/CLOUD_DEPLOYMENT_GUIDE.md)** - Deploy to Render.com (free tier)
+- **[Quick Start Guide](QUICKSTART.md)** - Get running locally in minutes
+- **[Deployment Guide](DEPLOYMENT.md)** - Original deployment guide
+- **[Integration Report](INTEGRATION_COMPLETE.md)** - Complete technical details
+- **[Project Status](STATUS.md)** - Metrics, test coverage, roadmap
 
-### Frontend
-- **React 18**
-- **TypeScript**
-- **Vite** — Build tool
-- **TanStack Query** — Data fetching
+---
 
-### Architecture
-- Monorepo structure: Python backend + React frontend
-- Local development, single-user MVP
-- No authentication (local prototype only)
+## ✨ Features
 
-## Project Structure
+### Core Workflow
+1. **Upload** - PDF or images (max 10 files, 20MB each)
+2. **Process** - AI extraction with Gemini 3.5 Flash Lite (free)
+3. **Review** - Color-coded fields (🟠 uncertain, 🔴 invalid)
+4. **Edit** - Manual correction with instant save
+5. **Export** - Excel download (blocked until all fields verified)
+
+### Technical Highlights
+- ✅ **Zero-guess extraction**: Never invents data, marks uncertain when unclear
+- ✅ **Closed sender list**: 34 Israeli medical institutions (4 health funds + 30 hospitals)
+- ✅ **ID validation**: Israeli ID checksum (Luhn-like algorithm)
+- ✅ **Date validation**: Format check, no future dates
+- ✅ **Persistent storage**: Survives server restart, page refresh
+- ✅ **Export blocking**: Backend-enforced, cannot bypass
+- ✅ **84 tests passing**: Automated unit + integration tests
+
+---
+
+## 🏗 Architecture
 
 ```
-.
-├── backend/           # Python FastAPI application
-├── frontend/          # React TypeScript application
-├── tests/             # Shared test utilities
-├── docs/              # Documentation
-├── PLAN.md            # Project plan v2.1 (approved)
-├── DECISIONS.md       # Architecture decisions v2.0 (approved)
-└── .kiro/specs/       # Kiro task specifications
+┌─────────────────────┐
+│  React Frontend     │  TypeScript + Vite
+│  (Workflow UI)      │  Upload → Process → Review → Export
+└──────────┬──────────┘
+           │ REST API
+           │
+┌──────────▼──────────┐
+│  FastAPI Backend    │  Python 3.13
+│  (Processing)       │  Gemini + Validation + Storage
+└──────────┬──────────┘
+           │
+    ┌──────┴─────┬────────────┬───────────┐
+    │            │            │           │
+┌───▼────┐  ┌───▼────┐  ┌────▼────┐  ┌──▼──────┐
+│ Gemini │  │Validator│  │Normalizer│  │ Storage │
+│  API   │  │ID/Date │  │34 Inst. │  │  JSON   │
+└────────┘  └────────┘  └─────────┘  └─────────┘
 ```
 
-## Setup Instructions
+---
 
-### System Requirements
+## 🚀 Getting Started
 
-**Backend:**
-- Python 3.10 or higher
-- pip (Python package manager)
-- Windows: truststore package (for SSL certificate validation)
+### Prerequisites
+- Python 3.13
+- Node.js 18+
+- Gemini API key (free): https://aistudio.google.com/app/apikey
 
-**Frontend:**
-- Node.js 18 or higher
-- npm (Node package manager)
+### Local Setup (5 minutes)
 
-**API Access:**
-- Gemini API key (Free Tier) — obtain from [Google AI Studio](https://makersuite.google.com/app/apikey)
+**Backend**:
+```powershell
+cd backend
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 
-### Quick Start
+# Create .env from template
+Copy-Item .env.example .env
+# Edit .env and add: GEMINI_API_KEY=your_key_here
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd The-Central-Virology-Laboratory
-   ```
+# Run
+uvicorn app.main:app --reload
+```
 
-2. **Backend Setup**
-   ```bash
-   cd backend
-   pip install -r requirements.txt
-   # Configure .env file (see .env.example)
-   ```
+**Frontend**:
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
-3. **Frontend Setup**
-   ```bash
-   cd frontend
-   npm install
-   ```
+**Access**: Open http://localhost:5173
 
-4. **Run Development Servers**
-   ```bash
-   # Terminal 1 - Backend
-   cd backend
-   uvicorn app.main:app --reload
-   
-   # Terminal 2 - Frontend
-   cd frontend
-   npm run dev
-   ```
+See [QUICKSTART.md](QUICKSTART.md) for detailed instructions.
 
-## Usage
+---
 
-> 📝 **Note:** Usage documentation will be added as features are implemented.
+## 📊 Current Status
 
-1. Upload PDF or image files
-2. Process batch with AI extraction
-3. Review and correct extracted fields
-4. Export to Excel
+- **Tests**: 84 passing ✅
+- **Frontend Build**: Success ✅
+- **Backend**: All endpoints working ✅
+- **Persistence**: JSON file storage ✅
+- **Deployment**: Ready for cloud ✅
 
-## Important Notes
+### What Works
+✅ Full workflow: Upload → AI extraction → Human review → Excel export  
+✅ Field editing with backend persistence  
+✅ Color-coded review (orange for uncertain, red for invalid)  
+✅ Export blocking until all fields verified  
+✅ ID validation (Israeli checksum)  
+✅ Date validation (format + future check)  
+✅ Sender normalization (34 institutions)  
+✅ Survives server restart & page refresh  
 
-- **MVP Prototype:** This is a hackathon prototype, NOT production-ready
-- **Budget:** 0 ₪ — uses only free-tier services
-- **Gemini Free Tier:** Subject to rate limits and quotas
-- **Local Only:** Single-user, localhost deployment
-- **No Authentication:** Suitable only for development/testing
-- **Data Privacy:** Do NOT use with real patient data without proper approvals
+### Known Limitations (MVP)
+⚠ No authentication (demo with test data only)  
+⚠ No rate limiting (monitor Gemini usage manually)  
+⚠ Cold start on free tier (~30-60s after idle)  
+⚠ Ephemeral disk on Render (data lost on redeploy)  
 
-## Documentation
+---
 
-- [PLAN.md](./PLAN.md) — Project plan and timeline
-- [DECISIONS.md](./DECISIONS.md) — Architecture and technical decisions
-- [Tasks](./.kiro/specs/tasks.md) — Development tasks and status
+## 🌍 Cloud Deployment
 
-## License
+**Budget: ₪0 (Free Tier)**
 
-> 📝 License information to be added
+```powershell
+# 1. Push to GitHub
+git push origin main
 
-## Contact
+# 2. Deploy to Render
+# Follow DEPLOYMENT.md for detailed instructions
+```
 
-> 📝 Contact information to be added
+Services:
+- Backend: `https://virology-lab-backend.onrender.com`
+- Frontend: `https://virology-lab-frontend.onrender.com`
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment guide.
+
+---
+
+## 📝 Documentation
+
+| File | Description |
+|------|-------------|
+| [QUICKSTART.md](QUICKSTART.md) | Local setup & running |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Cloud deployment (Render) |
+| [INTEGRATION_COMPLETE.md](INTEGRATION_COMPLETE.md) | Technical integration report |
+| [STATUS.md](STATUS.md) | Project metrics & roadmap |
+| [PLAN.md](PLAN.md) | Development plan & decisions |
+| `.kiro/specs/tasks.md` | Task breakdown |
+
+---
+
+## 🧪 Testing
+
+```powershell
+# Run all tests
+cd backend
+pytest tests/ -v
+
+# Expected: 84 passed
+
+# Build frontend
+cd frontend
+npm run build
+
+# Expected: Success, no errors
+```
+
+---
+
+## 🔒 Security Notes
+
+⚠ **Demo MVP - Use Test Data Only**
+
+This system is:
+- ✅ Suitable for hackathon demo
+- ✅ Good for proof-of-concept
+- ❌ **NOT** HIPAA compliant
+- ❌ **NOT** for real patient data
+- ❌ **NO** encryption at rest
+- ❌ **NO** audit logging
+
+For production with real data, see "Production Upgrade Path" in STATUS.md.
+
+---
+
+## 💰 Cost Breakdown
+
+| Service | Usage | Cost |
+|---------|-------|------|
+| Development | Local | ₪0 |
+| Gemini API | Free tier (15 RPM) | ₪0 |
+| Render Backend | Free (750h/mo) | ₪0 |
+| Render Frontend | Free (unlimited) | ₪0 |
+| **Total** | | **₪0** |
+
+---
+
+## 📈 Next Steps
+
+### For Demo
+1. Deploy to Render (DEPLOYMENT.md)
+2. Share frontend URL
+3. Demo with test forms
+4. Gather feedback
+
+### For Production
+1. Add PostgreSQL database
+2. Implement authentication
+3. Add rate limiting & monitoring
+4. HIPAA compliance measures
+5. Audit logging
+6. Backup strategy
+
+---
+
+## 🤝 Contributing
+
+This is a hackathon MVP. For production deployment:
+1. Review DECISIONS.md for design choices
+2. Check STATUS.md for known issues
+3. See tasks.md for pending work
+4. Follow secure coding practices
+
+---
+
+## 📄 License
+
+Hackathon project - Ministry of Health, Israel
+
+---
+
+## 🙏 Acknowledgments
+
+- **Gemini API**: Free tier for AI extraction
+- **Render**: Free hosting platform
+- **FastAPI + React**: Modern, fast web frameworks
+- **Python 3.13 + TypeScript**: Type-safe development
+
+---
+
+**Made with ❤ for improving healthcare data processing**  
+**Hackathon 2026 | Budget: ₪0 | Status: ✅ Complete**

@@ -1,0 +1,90 @@
+# RESTRICTED STAGING: real Gemini; synthetic or approved non-sensitive documents only.
+# Dedicated staging Supabase project; clinical production remains blocked.
+# Applying a Blueprint can deploy immediately: explicit approval is still required.
+services:
+  - type: web
+    name: virology-lab-staging-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    branch: integration/final-mvp
+    plan: free
+    region: frankfurt
+    healthCheckPath: /ready
+    autoDeployTrigger: "off"
+    envVars:
+      - key: DEPLOYMENT_MODE
+        value: staging-real
+      - key: DEMO_MODE
+        value: "false"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: HYBRID_ENGINE_ENABLED
+        value: "false"
+      - key: HYBRID_ENABLE_PREPROCESSING
+        value: "false"
+      - key: HYBRID_ENABLE_OCR
+        value: "false"
+      - key: HYBRID_ENABLE_HYBRID_VERIFICATION
+        value: "false"
+      - key: HYBRID_ENABLE_FOCUSED_RETRY
+        value: "false"
+      - key: MAX_FILE_SIZE_MB
+        value: "10"
+      - key: MAX_FILES_PER_BATCH
+        value: "3"
+      - key: MAX_PAGES_PER_DOCUMENT
+        value: "10"
+      - key: MAX_REQUEST_SIZE_MB
+        value: "32"
+      - key: MAX_IMAGE_PIXELS
+        value: "12000000"
+      - key: CONCURRENT_PROCESSING_BATCHES
+        value: "1"
+      - key: UPLOAD_REQUESTS_PER_MINUTE
+        value: "6"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET_NAME
+        sync: false
+      - key: API_USERNAME
+        sync: false
+      - key: API_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+  - type: web
+    name: virology-lab-staging-frontend
+    runtime: static
+    branch: integration/final-mvp
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    autoDeployTrigger: "off"
+    envVars:
+      - key: VITE_DEPLOYMENT_MODE
+        value: staging
+      - key: VITE_API_URL
+        sync: false
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

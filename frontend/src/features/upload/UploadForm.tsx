@@ -35,7 +35,8 @@ export function UploadForm({ onUploadSuccess }: UploadFormProps) {
 
     try {
       const response = await uploadFiles(selectedFiles)
-      setSuccess(`הועלו ${response.documents.length} קבצים בהצלחה (Batch ID: ${response.batch_id})`)
+      const pageCount = response.documents.reduce((sum, doc) => sum + (doc.page_count ?? 1), 0)
+      setSuccess(`הועלו ${response.documents.length} קבצים בהצלחה, ${pageCount} עמודים (Batch ID: ${response.batch_id})`)
       setSelectedFiles(null)
       
       if (onUploadSuccess) {

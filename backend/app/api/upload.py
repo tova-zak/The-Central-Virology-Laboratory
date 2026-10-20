@@ -1,15 +1,19 @@
 """File upload API endpoints."""
-import os
+import hashlib
+import logging
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import List
 from fastapi import APIRouter, File, UploadFile, HTTPException, status
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.services.storage import get_storage_backend
 
 
 router = APIRouter(prefix="/api", tags=["upload"])
+logger = logging.getLogger(__name__)
 
 
 # Response models
@@ -18,6 +22,7 @@ class DocumentInfo(BaseModel):
     document_id: str
     filename: str
     size_bytes: int
+    page_count: int = 1
 
 
 class BatchResponse(BaseModel):
@@ -82,18 +87,17 @@ async def upload_files(files: List[UploadFile] = File(...)):
     
     # Generate batch ID
     batch_id = f"batch_{uuid.uuid4().hex[:12]}"
-    batch_dir = Path(settings.temp_storage_path) / batch_id
-    batch_dir.mkdir(parents=True, exist_ok=True)
-    
+    storage = get_storage_backend()
     documents = []
+    manifest = []
     
     for file in files:
-        # Read file content
-        content = await file.read()
+        # Bound each read even after the request-level streamed body limit.
+        max_size_bytes = settings.max_file_size_mb * 1024 * 1024
+        content = await file.read(max_size_bytes + 1)
         file_size = len(content)
         
         # Validate file size
-        max_size_bytes = settings.max_file_size_mb * 1024 * 1024
         if file_size > max_size_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -113,44 +117,56 @@ async def upload_files(files: List[UploadFile] = File(...)):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"File {file.filename} content does not match declared type"
             )
+
+        detected_mime = next(mime for magic, mime in MAGIC_NUMBERS.items() if content.startswith(magic))
+        if (file.content_type or "").lower().replace("image/jpg", "image/jpeg") != detected_mime:
+            raise HTTPException(400, "Declared file type does not match content")
+        try:
+            page_count = 1
+            if detected_mime == "application/pdf":
+                import fitz
+                with fitz.open(stream=content, filetype="pdf") as pdf:
+                    if pdf.is_encrypted or not 1 <= pdf.page_count <= settings.max_pages_per_document:
+                        raise ValueError("PDF page count or encryption not permitted")
+                    page_count = pdf.page_count
+            else:
+                from PIL import Image
+                with Image.open(BytesIO(content)) as image:
+                    if image.width * image.height > settings.max_image_pixels:
+                        raise ValueError("Image dimensions exceed limit")
+                    image.verify()
+        except Exception:
+            raise HTTPException(400, "Invalid, encrypted or oversized document") from None
         
         # Generate document ID and save file
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
-        file_ext = get_file_extension(file.filename or ".pdf")
-        file_path = batch_dir / f"{doc_id}{file_ext}"
-        
-        # Write file to storage
-        with open(file_path, "wb") as f:
-            f.write(content)
+        # Use detected content rather than an untrusted filename extension.
+        file_ext = next(ext for magic, ext in ((b"%PDF", ".pdf"), (b"\x89PNG", ".png"),
+                                               (b"\xff\xd8\xff", ".jpg")) if content.startswith(magic))
+        storage.upload_file(batch_id, f"{doc_id}{file_ext}", content)
+        content_sha256 = hashlib.sha256(content).hexdigest()
+        manifest.append({"document_id": doc_id, "storage_name": f"{doc_id}{file_ext}",
+                         "size_bytes": file_size, "page_count": page_count, "sha256": content_sha256})
+        # Safe identifiers only (no filename, no content): lets "what did I upload" be verified later.
+        logger.info("Upload accepted batch=%s document=%s bytes=%d pages=%d sha256=%s",
+                    batch_id, doc_id, file_size, page_count, content_sha256)
         
         documents.append(DocumentInfo(
             document_id=doc_id,
             filename=file.filename or "unknown",
-            size_bytes=file_size
+            size_bytes=file_size,
+            page_count=page_count
         ))
     
+    # A successful upload means originals AND batch metadata are durable.
+    storage.save_batch(batch_id, {"batch_id": batch_id, "status": "uploaded",
+                                "documents": manifest, "test_records": [], "commitment_records": [],
+                                "errors": [], "demo_mode": settings.demo_mode})
     return BatchResponse(
         batch_id=batch_id,
         documents=documents
     )
 
 
-@router.get("/batches/{batch_id}")
-async def get_batch_status(batch_id: str):
-    """Get batch processing status.
-    
-    TODO: Implement status tracking
-    """
-    batch_dir = Path(settings.temp_storage_path) / batch_id
-    
-    if not batch_dir.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Batch {batch_id} not found"
-        )
-    
-    return {
-        "batch_id": batch_id,
-        "status": "uploaded",
-        "message": "Batch uploaded, processing not yet implemented"
-    }
+# GET /batches/{batch_id} moved to process.py to avoid endpoint collision
+# The processing router now handles batch status queries with full data
