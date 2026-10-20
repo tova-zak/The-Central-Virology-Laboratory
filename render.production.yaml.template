@@ -1,0 +1,103 @@
+# NON-DEPLOYABLE PRODUCTION DESIGN TEMPLATE. DO NOT APPLY.
+# Contains unapproved PAID resources. Region/release branch require owner decisions.
+# Backend fails closed in production mode; worker is a blocker-reporting stub.
+# No clinical authentication, tenant policies, audit schema or queue is implemented.
+services:
+  - type: web
+    name: virology-lab-production-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    branch: APPROVED_RELEASE_BRANCH_REQUIRED
+    region: APPROVED_REGION_REQUIRED
+    plan: 1c-2g
+    numInstances: 1
+    autoDeployTrigger: "off"
+    healthCheckPath: /ready
+    envVars:
+      - key: DEPLOYMENT_MODE
+        value: production
+      - key: DEMO_MODE
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET_NAME
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: virology-lab-production-queue
+          property: connectionString
+  - type: worker
+    name: virology-lab-production-worker
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    branch: APPROVED_RELEASE_BRANCH_REQUIRED
+    region: APPROVED_REGION_REQUIRED
+    plan: 2c-4g
+    numInstances: 1
+    autoDeployTrigger: "off"
+    # Exits with status 78, with no cloud I/O. This is NOT a functioning worker.
+    dockerCommand: python -m app.production_preflight
+    envVars:
+      - key: DEPLOYMENT_MODE
+        value: production
+      - key: DEMO_MODE
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET_NAME
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: virology-lab-production-queue
+          property: connectionString
+  - type: keyvalue
+    name: virology-lab-production-queue
+    region: APPROVED_REGION_REQUIRED
+    plan: 256mb
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+    persistenceMode: journal-snapshot
+  - type: web
+    name: virology-lab-production-frontend
+    runtime: static
+    rootDir: frontend
+    branch: APPROVED_RELEASE_BRANCH_REQUIRED
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    autoDeployTrigger: "off"
+    envVars:
+      - key: VITE_DEPLOYMENT_MODE
+        value: production
+      - key: VITE_API_URL
+        sync: false
+    headers:
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

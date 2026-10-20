@@ -12,9 +12,17 @@ function App() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
+
+  useEffect(() => {
+    const requireSignIn = () => setAuthenticated(false)
+    window.addEventListener('api-auth-required', requireSignIn)
+    return () => window.removeEventListener('api-auth-required', requireSignIn)
+  }, [])
 
   const signIn = async (event: FormEvent) => {
     event.preventDefault()
+    setSigningIn(true)
     apiClient.defaults.auth = { username, password }
     try {
       await apiClient.get('/api/session')
@@ -24,6 +32,8 @@ function App() {
     } catch {
       delete apiClient.defaults.auth
       setLoginError('Sign-in failed. Check credentials and connection.')
+    } finally {
+      setSigningIn(false)
     }
   }
 
@@ -108,7 +118,7 @@ function App() {
                     onChange={event => setUsername(event.target.value)} required /></label>
                   <label>Password <input type="password" autoComplete="current-password" value={password}
                     onChange={event => setPassword(event.target.value)} required /></label>
-                  <button type="submit">Sign in</button>
+                  <button type="submit" disabled={signingIn}>{signingIn ? 'Signing in...' : 'Sign in'}</button>
                   {loginError && <p role="alert">{loginError}</p>}
                 </form>
               ) : <WorkflowScreen />}

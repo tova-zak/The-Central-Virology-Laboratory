@@ -200,7 +200,7 @@ def get_storage_backend() -> StorageBackend:
         JSONStorage otherwise (local dev/test)
     """
     from app.core.config import settings
-    
+    settings.validate_deployment()
     if settings.deployment_mode == "cloud" and not (settings.supabase_url and settings.supabase_service_key):
         raise ValueError("Cloud mode requires SUPABASE_URL and SUPABASE_SERVICE_KEY")
     if bool(settings.supabase_url) != bool(settings.supabase_service_key):

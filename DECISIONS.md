@@ -640,3 +640,22 @@ CommitmentRecord עם `test_id` תואם אבל שאינו ברשימת `commitm
 **בעלת מסמך:** בעלת הפרויקט  
 **עדכון אחרון:** 2026-10-14
 
+
+
+## Deployment preparation record - 2026-10-20
+
+Persistence implementation checkpoint: `0f71767d62320d49b3869ca60dc7fde63b73139c`.
+This is not production validation. Existing patient/review/export business rules remain unchanged.
+
+Implemented technical boundaries authorized for this preparation:
+- Protected synthetic staging is distinct from production; legacy cloud mode aliases staging.
+- Production fails closed until clinical identity, tenant authorization, audit and durable processing exist.
+- Supabase remains the record/original authority; no replacement database or live schema/RLS work.
+- Separate production worker/private Key Value transport is a design template only, not an implemented consumer.
+- Request/document/resource caps bound the demo; they do not constitute production abuse protection.
+
+PENDING institutional decisions (not inferred or resolved): identity/SSO provider, MFA/role matrix,
+organization membership/ownership, approved regions and vendor/data-handling terms, audit/retention,
+backup RPO/RTO, paid resources and production release authority. The production template cannot be applied
+until these decisions and implementation gates are closed. See DEPLOYMENT.md and
+docs/PRODUCTION_ARCHITECTURE.md. No compliance certification is asserted.

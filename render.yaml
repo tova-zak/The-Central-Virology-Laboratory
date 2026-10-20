@@ -1,7 +1,8 @@
-# Protected synthetic demo only. Manual deployment requires approval.
+# STAGING ONLY: synthetic data and a dedicated staging Supabase project.
+# Applying a Blueprint can deploy immediately: explicit approval is still required.
 services:
   - type: web
-    name: virology-lab-backend
+    name: virology-lab-staging-backend
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
@@ -9,11 +10,11 @@ services:
     branch: integration/final-mvp
     plan: free
     region: frankfurt
-    healthCheckPath: /health
-    autoDeploy: false
+    healthCheckPath: /ready
+    autoDeployTrigger: "off"
     envVars:
       - key: DEPLOYMENT_MODE
-        value: cloud
+        value: staging
       - key: DEMO_MODE
         value: "true"
       - key: HYBRID_ENGINE_ENABLED
@@ -26,6 +27,20 @@ services:
         value: "false"
       - key: HYBRID_ENABLE_FOCUSED_RETRY
         value: "false"
+      - key: MAX_FILE_SIZE_MB
+        value: "10"
+      - key: MAX_FILES_PER_BATCH
+        value: "3"
+      - key: MAX_PAGES_PER_DOCUMENT
+        value: "10"
+      - key: MAX_REQUEST_SIZE_MB
+        value: "32"
+      - key: MAX_IMAGE_PIXELS
+        value: "12000000"
+      - key: CONCURRENT_PROCESSING_BATCHES
+        value: "1"
+      - key: UPLOAD_REQUESTS_PER_MINUTE
+        value: "6"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
@@ -39,14 +54,16 @@ services:
       - key: CORS_ORIGINS
         sync: false
   - type: web
-    name: virology-lab-frontend
+    name: virology-lab-staging-frontend
     runtime: static
     branch: integration/final-mvp
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: ./dist
-    autoDeploy: false
+    autoDeployTrigger: "off"
     envVars:
+      - key: VITE_DEPLOYMENT_MODE
+        value: staging
       - key: VITE_API_URL
         sync: false
     headers:
@@ -56,6 +73,12 @@ services:
       - path: /*
         name: Referrer-Policy
         value: no-referrer
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
     routes:
       - type: rewrite
         source: /*

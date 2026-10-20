@@ -1,6 +1,7 @@
 """Application configuration management using Pydantic Settings."""
 from pathlib import Path
 from typing import Literal
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,9 +28,9 @@ class Settings(BaseSettings):
     enable_focused_retry: bool = False  # DISABLED by default per user requirement
     
     # File Processing Limits (D-14 provisional)
-    max_file_size_mb: int = 20
-    max_pages_per_document: int = 30
-    max_files_per_batch: int = 10
+    max_file_size_mb: int = Field(default=20, ge=1, le=100)
+    max_pages_per_document: int = Field(default=30, ge=1, le=100)
+    max_files_per_batch: int = Field(default=10, ge=1, le=20)
     
     # CORS Configuration
     cors_origins: list[str] = ["http://localhost:5173"]
@@ -42,9 +43,46 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
     supabase_bucket_name: str = "virology-lab-uploads"
-    deployment_mode: Literal["local", "cloud"] = "local"
+    # "cloud" remains a compatibility alias for the protected staging demo.
+    deployment_mode: Literal["local", "cloud", "staging", "production"] = "local"
     api_username: str = ""
     api_password: str = ""
+    max_request_size_mb: int = Field(default=210, ge=1, le=512)
+    upload_requests_per_minute: int = Field(default=6, ge=1, le=60)
+    concurrent_processing_batches: int = Field(default=1, ge=1, le=4)
+    max_image_pixels: int = Field(default=20_000_000, ge=1, le=80_000_000)
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.deployment_mode != "local"
+
+    def validate_deployment(self) -> None:
+        # Deliberately not an env-var bypass: clinical controls are not implemented.
+        if self.deployment_mode == "production":
+            raise ValueError(
+                "PRODUCTION BLOCKED: institutional identity/RBAC, tenant authorization, "
+                "durable processing, audit ledger and institutional approvals are required"
+            )
+        if self.is_cloud:
+            if not self.demo_mode:
+                raise ValueError("Staging requires DEMO_MODE synthetic extraction")
+            if not (self.supabase_url and self.supabase_service_key):
+                raise ValueError("Cloud requires SUPABASE_URL and SUPABASE_SERVICE_KEY")
+            if not self.api_username or len(self.api_password) < 16:
+                raise ValueError("Staging requires API_USERNAME and a strong API_PASSWORD")
+            from urllib.parse import urlsplit
+            project = urlsplit(self.supabase_url)
+            if (project.scheme != "https" or not project.hostname or project.username
+                    or project.password or project.query or project.fragment or project.path not in ("", "/")):
+                raise ValueError("Cloud requires an exact HTTPS Supabase project endpoint")
+            for origin in self.cors_origins:
+                parsed = urlsplit(origin)
+                if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                        or parsed.password or parsed.path or parsed.query or parsed.fragment
+                        or "*" in origin):
+                    raise ValueError("Cloud requires exact HTTPS frontend CORS origins")
+            if not self.cors_origins:
+                raise ValueError("Cloud requires explicit frontend CORS origins")
     
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent.parent / ".env",

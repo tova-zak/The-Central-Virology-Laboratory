@@ -18,6 +18,10 @@ export const apiClient = axios.create({
 
 // Existing callers may log request errors; never include demo credentials there.
 apiClient.interceptors.response.use(response => response, error => {
+  if (error.response?.status === 401) {
+    delete apiClient.defaults.auth;
+    window.dispatchEvent(new Event('api-auth-required'));
+  }
   if (error.config) {
     delete error.config.auth;
     delete error.config.headers?.Authorization;

@@ -11,9 +11,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-dummy_key_for_demo}
       - DEMO_MODE=${DEMO_MODE:-true}
-      - HYBRID_ENGINE_ENABLED=true
+      - HYBRID_ENGINE_ENABLED=false
+      - HYBRID_ENABLE_PREPROCESSING=false
+      - HYBRID_ENABLE_OCR=false
+      - HYBRID_ENABLE_HYBRID_VERIFICATION=false
+      - HYBRID_ENABLE_FOCUSED_RETRY=false
       - TEMP_STORAGE_PATH=/app/temp_storage
       - 'CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]'
       - DEPLOYMENT_MODE=local

@@ -195,6 +195,9 @@ class BackgroundProcessor:
             if existing_job.status in [ProcessingStatus.QUEUED, ProcessingStatus.PROCESSING]:
                 raise ValueError(f"Batch {batch_id} is already being processed")
         
+        if self.active_job_count() >= settings.concurrent_processing_batches:
+            raise ValueError("Processing capacity reached; retry later")
+
         # Create new job
         job = ProcessingJob(batch_id)
         self._jobs[batch_id] = job
@@ -204,6 +207,10 @@ class BackgroundProcessor:
         
         logger.info(f"Started processing job for batch {batch_id}")
         return job
+
+    def active_job_count(self) -> int:
+        return sum(job.status in (ProcessingStatus.QUEUED, ProcessingStatus.PROCESSING)
+                   for job in self._jobs.values())
     
     def get_job_status(self, batch_id: str) -> Optional[ProcessingJob]:
         """Get status of a processing job.
@@ -400,6 +407,18 @@ class BackgroundProcessor:
                         "error": error_msg
                     })
             
+            # New manifests retain accepted page counts, including unprocessed/error pages.
+            represented_pages = {record.form_id for record in commitment_records}
+            for document in batch_data.get("documents", []):
+                for page_index in range(document.get("page_count", 0)):
+                    form_id = f"{document['document_id']}_page_{page_index}"
+                    if form_id not in represented_pages:
+                        commitment_records.append(self._create_pending_commitment_from_error(
+                            document["document_id"], page_index, "Page not processed"))
+                        represented_pages.add(form_id)
+                        errors.append({"document_id": document["document_id"], "page_index": page_index,
+                                       "error": "Page not processed; manual review required"})
+
             # Determine final status
             if job.status == ProcessingStatus.QUOTA_EXHAUSTED:
                 # Already set - keep it

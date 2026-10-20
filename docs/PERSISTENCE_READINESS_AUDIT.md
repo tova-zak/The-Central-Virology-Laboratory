@@ -91,3 +91,19 @@ Do not include the pre-existing modifications to e2e_batch_processing_test.py or
 test_live_single_extraction.py, .agents, environment files, batch dumps, scripts,
 PDFs or XLSX artifacts. No new commit was made because the original request limited
 commits to verified changes and the updated instruction stops further verification.
+
+
+## Checkpoint update - 2026-10-20
+
+The previous no-commit statement records the earlier handoff. At the user's later
+explicit instruction, exactly the 20 candidate files above were inspected/staged and
+committed as `0f71767d62320d49b3869ca60dc7fde63b73139c`, message
+`feat: integrate Supabase persistence and prepare secure deployment`.
+The staged diff/credential-pattern and whitespace checks passed; no real patient
+information, credentials, generated artifacts or unrelated changes were included.
+This commit records implementation only, not production runtime validation.
+
+Further deployment hardening is a separate uncommitted change set. See
+docs/DEPLOYMENT_PREPARATION_STATUS.md for its exact file list, offline-static evidence
+and remaining blockers. The user's earlier tests remain their evidence; they were
+not repeated as live tests in this task.

@@ -68,6 +68,8 @@ async def process_batch(batch_id: str):
     
     # Start new processing job
     try:
+        if processor.active_job_count() >= settings.concurrent_processing_batches:
+            raise HTTPException(429, "Processing capacity reached; retry later", headers={"Retry-After": "30"})
         if batch_data and batch_data.get("status") in ("queued", "processing") and not existing_job:
             raise HTTPException(409, "Previous processing was interrupted; manual recovery required")
         if batch_data:
