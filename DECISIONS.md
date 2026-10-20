@@ -515,7 +515,104 @@ Excel Export חסום עד ל-D-04, D-05, D-13.
 
 ---
 
-## 6. הנחיות שימוש
+## 6. החלטות מיושמות (IMPLEMENTED) — ReviewScreen Three-Table Redesign
+
+החלטות שהתקבלו במסגרת משימת ReviewScreen Three-Table Redesign (2025-01-18).
+
+---
+
+### D-16: relation_status MVP Limitation
+
+**Decision:**  
+במסגרת ה-MVP, כל CommitmentRecords נוצרים עם `relation_status="ambiguous"` (ברירת מחדל שמרנית).  
+אין לוגיקה במנוע החילוץ שמגדירה `relation_status` כ-"clear" או "related" על בסיס ראיות.  
+לכן, **בדיקת ambiguous relationships מדולגת בסיווג** (classification) כיוון שהיא הייתה מסמנת את כל הרשומות.
+
+**Implementation:**
+- Backend: `classifier.py` - פונקציה `hasWarnings()` מדלגת על בדיקת `relation_status="ambiguous"`
+- Frontend: `classification.ts` - פונקציה `hasWarnings()` מדלגת על בדיקת `relation_status`
+- הוערה בקוד: `// NOTE: Skipping ambiguous relation_status check (H-1 resolution)`
+
+**Future Enhancement:**  
+שיפור מנוע החילוץ כדי להגדיר `relation_status` על בסיס ראיות:
+- "clear": יחס ברור בין commitment למספר מרכזי (בקרבה מרחבית, זיהוי barcode וכו')
+- "related": סבירות גבוהה ליחס
+- "ambiguous": לא ברור (ברירת מחדל)
+
+**Rationale:**
+- מניעת false positives: כל הרשומות היו מסווגות ל-Table 2 (warnings)
+- pragmatic: אין נתונים זמינים להבדיל בין commitments ברורים למעורפלים
+- שקיפות: תיעוד המגבלה במפורש
+
+**Status:** IMPLEMENTED  
+**Date:** 2025-01-18  
+**Affected:** Classification logic (backend + frontend)  
+**Documented In:** plan.md (H-1 resolution)
+
+---
+
+### D-17: confirmed_empty Policy
+
+**Decision:**  
+המערכת מאפשרת לאשר כל שדה כריק (confirmed empty) דרך endpoint ה-`/verify`.  
+שדה עם `reviewed_value=""` AND `review_state="human_verified"` **אינו נחשב כחסר** (not missing).  
+זה כולל שדות חובה (required fields).
+
+**Implementation:**
+- Backend: `classifier.py` - פונקציה `is_field_missing()` מחזירה `False` אם `review_state == "human_verified"`
+- Frontend: `classification.ts` - פונקציה `isFieldMissing()` מחזירה `false` אם `review_state === 'human_verified'`
+
+**Business Case:**  
+יש מקרים לגיטימיים שבהם שדה "חובה" יכול להיות ריק:
+- שם פרטי: חלק מהאנשים יש להם רק שם משפחה
+- מספר התחייבות: לא תמיד קיים
+- מספר מרכזי: יכול להיות חסר בנסיבות מסוימות
+
+**Caveat:**  
+זוהי מדיניות עסקית זמנית **הממתינה להבהרה מהמעבדה**.  
+מומלץ לאשר עם בעלי התפקיד אילו שדות אכן מותר לאשר כריקים.
+
+**Rationale:**
+- גמישות: המזכירה יכולה לטפל במקרי קצה
+- שקיפות: אישור אנושי מתועד ב-`human_verified`
+- מניעת חסימות: לא לחסום ייצוא על שדה שהמזכירה אישרה שהוא ריק לגיטימי
+
+**Status:** IMPLEMENTED (pending business policy clarification)  
+**Date:** 2025-01-18  
+**Affected:** Classification logic, Export eligibility  
+**Documented In:** plan.md (H-3 resolution)
+
+---
+
+### D-18: Orphaned Commitments Handling
+
+**Decision:**  
+רשימת `commitment_ids` ב-TestRecord היא המקור המחייב.  
+CommitmentRecord עם `test_id` תואם אבל שאינו ברשימת `commitment_ids` נחשב לשגיאת שלמות נתונים (orphaned commitment).
+
+**Implementation:**
+- Frontend: `relationships.ts` - פונקציה `getCommitmentNumbersForTest()`:
+  - מזהה orphaned commitments (יש להם `test_id` אבל לא ב-`commitment_ids`)
+  - מדפיסה אזהרה לקונסול: `console.warn(...)`
+  - **לא מציגה orphaned commitments** (per H-2 resolution)
+  - לא קורסת - ממשיכה לעבד רק את commitment_ids המחייבים
+
+**Scenario:**  
+במבחנים ידניים, תרחיש זה עשוי שלא להופיע כיוון שמנוע החילוץ תמיד יוצר גם TestRecord.commitment_ids וגם CommitmentRecord יחד.
+
+**Rationale:**
+- robustness: המערכת לא קורסת על שגיאת נתונים
+- שקיפות: אזהרה בקונסול מסייעת לאבחון בדיקות
+- pragmatic: מציגים רק מה שמתועד בצורה רשמית
+
+**Status:** IMPLEMENTED  
+**Date:** 2025-01-18  
+**Affected:** Commitment display (frontend)  
+**Documented In:** plan.md (H-2 resolution)
+
+---
+
+## 7. הנחיות שימוש
 
 ### לפני תחילת משימה:
 

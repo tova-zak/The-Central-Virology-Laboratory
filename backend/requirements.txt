@@ -22,6 +22,13 @@ openpyxl
 python-multipart
 python-magic-bin  # Windows-compatible magic number detection
 
+# Image Preprocessing (Phase 1)
+opencv-python>=4.10.0  # Deskew, contrast, rotation correction
+numpy>=1.26.0  # Required by opencv
+
+# OCR Layer (Phase 2)
+pytesseract>=0.3.13  # Tesseract OCR wrapper for verification
+
 # Testing
 pytest
 pytest-asyncio

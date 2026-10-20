@@ -224,4 +224,5 @@ __marimo__/
 reference/
 temp/
 tests/fixtures/
+tests/local_test_results/
 node_modules/

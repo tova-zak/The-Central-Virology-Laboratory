@@ -135,22 +135,5 @@ async def upload_files(files: List[UploadFile] = File(...)):
     )
 
 
-@router.get("/batches/{batch_id}")
-async def get_batch_status(batch_id: str):
-    """Get batch processing status.
-    
-    TODO: Implement status tracking
-    """
-    batch_dir = Path(settings.temp_storage_path) / batch_id
-    
-    if not batch_dir.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Batch {batch_id} not found"
-        )
-    
-    return {
-        "batch_id": batch_id,
-        "status": "uploaded",
-        "message": "Batch uploaded, processing not yet implemented"
-    }
+# GET /batches/{batch_id} moved to process.py to avoid endpoint collision
+# The processing router now handles batch status queries with full data
