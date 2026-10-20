@@ -703,23 +703,26 @@ class BackgroundProcessor:
             asyncio.TimeoutError: If extraction times out
             Exception: If extraction fails permanently or quota exhausted
         """
-        # Check quota status BEFORE attempting
-        quota_manager = get_quota_manager()
-        model = self._extractor.model
+        # Skip quota checks in DEMO_MODE (MockExtractor doesn't use API)
+        if not settings.demo_mode:
+            # Check quota status BEFORE attempting (only in real API mode)
+            quota_manager = get_quota_manager()
+            model = self._extractor.model
+            
+            is_available, quota_status = quota_manager.check_quota_available(model)
+            
+            if not is_available:
+                # Quota exhausted - don't even try
+                logger.error(
+                    f"[{document_id}] Quota exhausted for {model}. "
+                    f"Blocked since {quota_status.exhausted_at.isoformat()}. "
+                    f"Retry after: {quota_status.retry_after.isoformat() if quota_status.retry_after else 'unknown'}"
+                )
+                raise Exception(
+                    f"Gemini quota exhausted ({quota_status.quota_type}). "
+                    f"Retry after: {quota_status.retry_after.isoformat() if quota_status.retry_after else 'unknown'}"
+                )
         
-        is_available, quota_status = quota_manager.check_quota_available(model)
-        
-        if not is_available:
-            # Quota exhausted - don't even try
-            logger.error(
-                f"[{document_id}] Quota exhausted for {model}. "
-                f"Blocked since {quota_status.exhausted_at.isoformat()}. "
-                f"Retry after: {quota_status.retry_after.isoformat() if quota_status.retry_after else 'unknown'}"
-            )
-            raise Exception(
-                f"Gemini quota exhausted ({quota_status.quota_type}). "
-                f"Retry after: {quota_status.retry_after.isoformat() if quota_status.retry_after else 'unknown'}"
-            )
         
         last_exception = None
         
