@@ -96,8 +96,33 @@ class MockExtractor(Extractor):
         num_central = rng.randint(1, 3)
         central_numbers = [str(rng.randint(10000, 99999)) for _ in range(num_central)]
         
-        # Generate commitment numbers (same count as central)
-        commitment_numbers = [str(rng.randint(1000, 9999)) for _ in range(num_central)]
+        # Generate commitment numbers with realistic scenario:
+        # - For Leumit sender: Mix of "התחייבות" and "דגימה לאומית" (both valid)
+        # - For Clalit/Maccabi: "דגימה" only (should be filtered out)
+        # - For others: "התחייבות" and "דרישה" (both valid)
+        commitment_numbers = []
+        commitment_types = []
+        
+        if "לאומית" in sender:
+            # Leumit: mix התחייבות and דגימה
+            for i in range(num_central):
+                num = str(rng.randint(1000, 9999))
+                commitment_numbers.append(num)
+                label = rng.choice(["התחייבות", "דגימה לאומית", "דגימה"])
+                commitment_types.append({"number": num, "label": label})
+        elif "כללית" in sender or "מכבי" in sender:
+            # Clalit/Maccabi: only דגימה (will be filtered)
+            for i in range(num_central):
+                num = str(rng.randint(1000, 9999))
+                commitment_numbers.append(num)
+                commitment_types.append({"number": num, "label": "דגימה"})
+        else:
+            # Others: התחייבות or דרישה
+            for i in range(num_central):
+                num = str(rng.randint(1000, 9999))
+                commitment_numbers.append(num)
+                label = rng.choice(["התחייבות", "דרישה"])
+                commitment_types.append({"number": num, "label": label})
         
         # Occasionally add warnings
         warnings = []
@@ -113,7 +138,9 @@ class MockExtractor(Extractor):
             "sender": sender,
             "received_date": received_date,
             "central_numbers": central_numbers,
-            "commitment_numbers": commitment_numbers
+            "commitment_numbers": commitment_numbers,
+            "commitment_types": commitment_types,  # Add types for context-aware detection
+            "patient_full_name_raw": f"{first_name} {last_name}"  # Stage 1.5 support
         }
         
         return ExtractionResult(
