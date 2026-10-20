@@ -111,9 +111,11 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
       setBatchData(data);
       
       // Classify records for table view
+      // Note: Backend now returns only commitment_records (one per page)
+      // test_records is deprecated but classifyTestRecords expects it
       const classifiedRecords = classifyTestRecords(
-        data.test_records,
-        data.commitment_records,
+        data.test_records || [],  // Fallback to empty array if not present
+        data.commitment_records || [],
         data.status
       );
       setClassified(classifiedRecords);
@@ -660,7 +662,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
         <AssignCommitmentModal
           isOpen={assignModal.isOpen}
           commitment={assignModal.commitment}
-          testRecords={batchData.test_records}
+          testRecords={batchData.test_records || []}
           onAssign={(testId) => handleAssignCommitment(assignModal.commitment.commitment_record_id, testId)}
           onClose={() => setAssignModal(null)}
         />
