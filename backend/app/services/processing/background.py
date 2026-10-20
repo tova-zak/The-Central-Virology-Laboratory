@@ -244,10 +244,7 @@ class BackgroundProcessor:
             job.progress["total"] = len(all_files)
             logger.info(f"[{batch_id}] Found {len(all_files)} files to process")
             
-            test_records = []
             commitment_records = []
-            forms = []  # NEW: Track LogicalForms
-            samples = []  # NEW: Track Samples
             errors = []
             
             # Process each file
@@ -271,118 +268,105 @@ class BackgroundProcessor:
                     render_time = time.time() - render_start
                     logger.info(f"[{batch_id}][{document_id}] Rendered {len(images)} pages in {render_time:.2f}s")
                     
-                    # ========== FORM-BASED PROCESSING (NEW MVP APPROACH) ==========
-                    # Step 2: Segment pages into logical forms
-                    from app.services.segmentation.segmenter import segment_pages_into_forms
+                    # ========== ONE-PAGE-ONE-COMMITMENT PROCESSING ==========
+                    # Business Rule: Every page = one independent commitment
+                    # N-page PDF → N CommitmentRecord objects
+                    # No multi-page grouping in the active processing path
                     
-                    logger.info(f"[{batch_id}][{document_id}] Segmenting {len(images)} pages into logical forms")
-                    segment_start = time.time()
+                    logger.info(f"[{batch_id}][{document_id}] Processing {len(images)} pages (one commitment per page)")
                     
-                    # Get OCR extractor for segmentation (reuse from hybrid pipeline if enabled)
-                    ocr_for_segmentation = self._get_ocr_extractor() if self._hybrid_config.enable_ocr else None
-                    forms = segment_pages_into_forms(images, document_id, ocr_for_segmentation)
-                    
-                    segment_time = time.time() - segment_start
-                    logger.info(f"[{batch_id}][{document_id}] Segmented into {len(forms)} forms in {segment_time:.2f}s")
-                    
-                    # Step 3: Process each form (instead of each page)
-                    for form_index, form in enumerate(forms):
-                        logger.info(f"[{batch_id}][{document_id}] Processing form {form_index + 1}/{len(forms)} with pages {form.page_indices}")
+                    # Step 2: Process each page independently
+                    for page_index, image_bytes in enumerate(images):
+                        logger.info(f"[{batch_id}][{document_id}] Processing page {page_index + 1}/{len(images)}")
                         
                         try:
-                            # Extract fields from all pages of the form
-                            form_extracted = await self._extract_from_form(
-                                form=form,
-                                images=images,
-                                batch_id=batch_id,
-                                document_id=document_id
-                            )
-                            
-                            # Create Samples from the form (central_number + received_date pairs)
-                            form_samples = self._create_samples_from_form(form_extracted)
-                            
-                            # Create CommitmentRecords linked to this form
-                            from app.api.process import _create_commitment_records
-                            
-                            # We need to create a temporary TestRecord for backward compatibility
-                            # with _create_commitment_records which expects TestRecord
-                            # TODO: Refactor _create_commitment_records to work with LogicalForm
-                            temp_test_record = TestRecord(
-                                test_id=form_extracted.form_id,
-                                patient_first_name=form_extracted.patient_first_name,
-                                patient_last_name=form_extracted.patient_last_name,
-                                patient_id_number=form_extracted.patient_id_number,
-                                sender=form_extracted.sender,
-                                received_date=form_samples[0].received_date if form_samples else FieldValue[str](),
-                                central_numbers=FieldValue[list[str]](
-                                    raw_value=[s.central_number.raw_value for s in form_samples if s.central_number.raw_value],
-                                    extraction_state=ExtractionState.found if form_samples else ExtractionState.missing
-                                ),
-                                commitment_ids=[],
+                            # Extract fields from this page
+                            extraction_result = await self._extract_with_retry(
+                                image_bytes=image_bytes,
                                 document_id=document_id,
-                                page_indices=form_extracted.page_indices
+                                page_index=page_index
                             )
                             
-                            # Extract commitment numbers from extraction_result (if available)
-                            # Note: We need to pass the extraction_result, but we're doing per-form now
-                            # For MVP, we'll extract commitments from the first page's extraction
-                            # TODO: Aggregate commitments from all pages in multi-page forms
-                            commitments = []  # Will be populated below
-                            
-                            # Create commitments and link to samples
-                            form_commitments = self._create_commitments_for_form(
-                                form=form_extracted,
-                                samples=form_samples,
-                                temp_test_record=temp_test_record
+                            # Create ONE CommitmentRecord from this page
+                            commitment = self._create_commitment_from_page(
+                                extraction_result=extraction_result,
+                                document_id=document_id,
+                                page_index=page_index
                             )
                             
-                            commitments.extend(form_commitments)
+                            commitment_records.append(commitment)
                             
-                            # Store form, samples, and commitments
-                            forms.append(form_extracted)  # NEW: Store the form
-                            samples.extend(form_samples)  # NEW: Store samples
-                            test_records.append(temp_test_record)  # Keep for backward compat
-                            commitment_records.extend(commitments)
-                            
-                            logger.info(f"[{batch_id}][{document_id}] Form {form_index + 1} processed: {len(form_samples)} samples, {len(commitments)} commitments")
+                            logger.info(f"[{batch_id}][{document_id}] Page {page_index + 1} processed: commitment {commitment.commitment_record_id}")
                             
                         except asyncio.TimeoutError:
                             error_msg = f"Gemini timeout after {self._gemini_timeout_seconds}s"
-                            logger.error(f"[{batch_id}][{document_id}] Form {form_index}: {error_msg}")
+                            logger.error(f"[{batch_id}][{document_id}] Page {page_index}: {error_msg}")
                             errors.append({
                                 "document_id": document_id,
-                                "form_id": form.form_id,
-                                "pages": form.page_indices,
+                                "page_index": page_index,
                                 "error": error_msg
                             })
                         
                         except Exception as e:
-                            # Check if quota exhausted
-                            if "quota exhausted" in str(e).lower() or "quota_exhausted" in job.status.value:
+                            import traceback
+                            
+                            # Log diagnostic information
+                            logger.error(
+                                f"[{batch_id}][{document_id}][page {page_index}] EXCEPTION: "
+                                f"module={self.__class__.__module__}, "
+                                f"method=_process_batch, "
+                                f"extractor_class={self._extractor.__class__.__name__}, "
+                                f"demo_mode={settings.demo_mode}, "
+                                f"exception_type={type(e).__name__}, "
+                                f"message={str(e)}"
+                            )
+                            logger.debug(f"Stack trace:\n{traceback.format_exc()}")
+                            
+                            # Check if quota exhausted (ONLY check string, do NOT reference undefined variables)
+                            error_str = str(e).lower()
+                            if "quota exhausted" in error_str or "gemini daily quota" in error_str:
                                 logger.error(f"[{batch_id}][{document_id}] Quota exhausted, stopping batch")
                                 job.status = ProcessingStatus.QUOTA_EXHAUSTED
                                 
-                                quota_manager = get_quota_manager()
-                                exhausted_quotas = quota_manager.get_all_exhausted_quotas()
-                                
-                                if exhausted_quotas:
-                                    quota_info = list(exhausted_quotas.values())[0]
-                                    job.error = (
-                                        f"מכסת Gemini החינמית הסתיימה. "
-                                        f"ניתן לנסות שוב ב-{quota_info.retry_after.strftime('%Y-%m-%d %H:%M UTC') if quota_info.retry_after else 'מועד לא ידוע'}."
-                                    )
+                                # Only access quota_manager if NOT in demo mode
+                                if not settings.demo_mode:
+                                    quota_manager = get_quota_manager()
+                                    exhausted_quotas = quota_manager.get_all_exhausted_quotas()
+                                    
+                                    if exhausted_quotas:
+                                        quota_info = list(exhausted_quotas.values())[0]
+                                        job.error = (
+                                            f"מכסת Gemini החינמית הסתיימה. "
+                                            f"ניתן לנסות שוב ב-{quota_info.retry_after.strftime('%Y-%m-%d %H:%M UTC') if quota_info.retry_after else 'מועד לא ידוע'}."
+                                        )
+                                    else:
+                                        job.error = "מכסת Gemini החינמית הסתיימה."
                                 else:
-                                    job.error = "מכסת Gemini החינמית הסתיימה."
+                                    job.error = "Quota exhausted error in DEMO_MODE (should not happen)"
                                 
                                 break
                             
-                            error_msg = str(e)
-                            logger.error(f"[{batch_id}][{document_id}] Form {form_index} failed: {error_msg}")
+                            # For other errors, create a pending commitment record
+                            try:
+                                error_msg = str(e)
+                                logger.error(f"[{batch_id}][{document_id}] Page {page_index} failed: {error_msg}, creating pending record")
+                                
+                                # Create a commitment record flagged for human review
+                                commitment = self._create_pending_commitment_from_error(
+                                    document_id=document_id,
+                                    page_index=page_index,
+                                    error_message=error_msg
+                                )
+                                commitment_records.append(commitment)
+                                
+                            except Exception as inner_e:
+                                logger.error(f"[{batch_id}][{document_id}] Failed to create pending record: {inner_e}")
+                            
                             errors.append({
                                 "document_id": document_id,
-                                "form_id": form.form_id,
-                                "pages": form.page_indices,
-                                "error": error_msg
+                                "page_index": page_index,
+                                "error": str(e),
+                                "error_type": type(e).__name__
                             })
                     
                     # If quota exhausted, stop processing files
@@ -401,7 +385,7 @@ class BackgroundProcessor:
             if job.status == ProcessingStatus.QUOTA_EXHAUSTED:
                 # Already set - keep it
                 pass
-            elif len(test_records) == 0 and len(errors) > 0:
+            elif len(commitment_records) == 0 and len(errors) > 0:
                 job.status = ProcessingStatus.FAILED
             elif len(errors) > 0:
                 job.status = ProcessingStatus.COMPLETED_WITH_ERRORS
@@ -412,18 +396,16 @@ class BackgroundProcessor:
             batch_result = {
                 "batch_id": batch_id,
                 "status": job.status.value,
-                "test_records": [r.model_dump() for r in test_records],
                 "commitment_records": [c.model_dump() for c in commitment_records],
-                "forms": [f.model_dump() for f in forms],  # NEW
-                "samples": [s.model_dump() for s in samples],  # NEW
                 "statistics": {
-                    "total_pages": sum(len(r.page_indices) if r.page_indices else 1 for r in test_records),
-                    "total_forms": len(forms),  # NEW: actual form count from segmentation
+                    "total_pages": len(commitment_records),  # One page = one commitment
                     "total_commitments": len(commitment_records),
-                    "unresolved_relationships": sum(1 for c in commitment_records if c.relationship_status == "unresolved_relationship")
+                    "pages_needing_review": sum(1 for c in commitment_records 
+                                                if c.commitment_number.review_state == ReviewState.needs_review 
+                                                or c.review_status == ReviewState.needs_review)
                 },
                 "errors": errors,
-                "processed_count": len(test_records),
+                "processed_count": len(commitment_records),
                 "error_count": len(errors)
             }
             
@@ -435,7 +417,7 @@ class BackgroundProcessor:
             logger.info(
                 f"[{batch_id}] Processing complete: "
                 f"status={job.status.value}, "
-                f"records={len(test_records)}, "
+                f"commitment_records={len(commitment_records)}, "
                 f"errors={len(errors)}, "
                 f"duration={duration:.1f}s"
             )
@@ -458,6 +440,157 @@ class BackgroundProcessor:
                 "error_count": 1
             }
             self._storage.save_batch(batch_id, error_result)
+    
+    def _create_commitment_from_page(
+        self,
+        extraction_result,
+        document_id: str,
+        page_index: int
+    ) -> CommitmentRecord:
+        """Create exactly ONE CommitmentRecord from a single page extraction.
+        
+        Business Rule: ONE COMMITMENT PER PAGE.
+        - If extraction returns multiple apparent commitment numbers → flag for human review (do not split).
+        - If extraction fails → keep one record with missing state, flag for review.
+        - Multiple central numbers on one page stay in ONE commitment record.
+        
+        Args:
+            extraction_result: ExtractionResult from Gemini/Mock extraction
+            document_id: Document identifier
+            page_index: 0-based page index
+            
+        Returns:
+            CommitmentRecord with exactly one record per page
+        """
+        import uuid
+        
+        # Generate unique commitment ID
+        commitment_record_id = f"{document_id}_page_{page_index}_{uuid.uuid4().hex[:8]}"
+        
+        # Extract fields from extraction_result
+        fields = extraction_result.fields if hasattr(extraction_result, 'fields') else {}
+        
+        # Extract commitment number(s)
+        commitment_numbers = fields.get('commitment_numbers', [])
+        if not isinstance(commitment_numbers, list):
+            commitment_numbers = [commitment_numbers] if commitment_numbers else []
+        
+        # Apply business rule: ONE COMMITMENT PER PAGE
+        if len(commitment_numbers) == 0:
+            # No commitment number found → mark as missing
+            commitment_number_field = FieldValue[str](
+                raw_value=None,
+                extraction_state=ExtractionState.missing,
+                review_state=ReviewState.needs_review
+            )
+        elif len(commitment_numbers) == 1:
+            # Exactly one commitment number → use it
+            commitment_number_field = FieldValue[str](
+                raw_value=commitment_numbers[0],
+                extraction_state=ExtractionState.found,
+                review_state=ReviewState.pending
+            )
+        else:
+            # Multiple commitment numbers on one page → FLAG FOR REVIEW, use first one
+            commitment_number_field = FieldValue[str](
+                raw_value=commitment_numbers[0],
+                extraction_state=ExtractionState.conflicting,
+                review_state=ReviewState.needs_review
+            )
+            logger.warning(
+                f"Page {page_index} has multiple commitment numbers: {commitment_numbers}. "
+                f"Using first one and flagging for review."
+            )
+        
+        # Extract central numbers (multiple allowed on one page, in ONE commitment)
+        central_numbers = fields.get('central_numbers', [])
+        if not isinstance(central_numbers, list):
+            central_numbers = [central_numbers] if central_numbers else []
+        
+        # Extract patient info
+        patient_first_name = fields.get('patient_first_name')
+        patient_last_name = fields.get('patient_last_name')
+        patient_id_number = fields.get('patient_id_number')
+        sender = fields.get('sender')
+        received_date = fields.get('received_date')
+        
+        # Create CommitmentRecord
+        commitment = CommitmentRecord(
+            commitment_record_id=commitment_record_id,
+            form_id=f"{document_id}_page_{page_index}",  # One page = one "form" conceptually
+            commitment_number=commitment_number_field,
+            sample_ids=[],  # Simplified: no separate Sample entities in one-page-one-commitment model
+            central_number_refs=central_numbers,  # Store central numbers directly
+            relationship_status="none" if not central_numbers else "inferred",
+            review_status=commitment_number_field.review_state
+        )
+        
+        # Store page metadata (add custom fields if needed)
+        # Note: CommitmentRecord doesn't have page_index field, but we can use form_id encoding
+        # For proper implementation, we'd add page_index/document_id fields to CommitmentRecord model
+        
+        return commitment
+    
+    def _create_pending_commitment_from_error(
+        self,
+        document_id: str,
+        page_index: int,
+        error_message: str
+    ) -> CommitmentRecord:
+        """Create a pending CommitmentRecord for a page that failed extraction.
+        
+        This ensures every page is represented by exactly one commitment record,
+        even if extraction failed.
+        
+        Args:
+            document_id: Document identifier
+            page_index: 0-based page index
+            error_message: Error message from failed extraction
+            
+        Returns:
+            CommitmentRecord flagged for human review
+        """
+        import uuid
+        
+        commitment_record_id = f"{document_id}_page_{page_index}_{uuid.uuid4().hex[:8]}_error"
+        
+        # Create commitment with all fields missing
+        commitment = CommitmentRecord(
+            commitment_record_id=commitment_record_id,
+            form_id=f"{document_id}_page_{page_index}",
+            commitment_number=FieldValue[str](
+                raw_value=None,
+                extraction_state=ExtractionState.missing,
+                review_state=ReviewState.needs_review
+            ),
+            sample_ids=[],
+            central_number_refs=[],
+            relationship_status="none",
+            review_status=ReviewState.needs_review
+        )
+        
+        logger.info(f"Created pending commitment record for failed page: {commitment_record_id}")
+        
+        return commitment
+    
+    # ========== LEGACY METHODS (PRESERVED FOR REFERENCE) ==========
+    # These methods implement the OLD form-based segmentation approach.
+    # They are kept for reference but NOT used in the active code path.
+    # The new approach processes one page = one commitment directly.
+    
+    async def _legacy_extract_from_form(
+        self,
+        form: LogicalForm,
+        images: list[bytes],
+        batch_id: str,
+        document_id: str
+    ) -> LogicalForm:
+        """LEGACY: Extract fields from all pages of a form.
+        
+        This method is NO LONGER USED in the active processing path.
+        Preserved for reference and git history.
+        """
+        raise NotImplementedError("This legacy method is not used in one-page-one-commitment processing")
     
     async def _extract_from_form(
         self,
@@ -703,6 +836,13 @@ class BackgroundProcessor:
             asyncio.TimeoutError: If extraction times out
             Exception: If extraction fails permanently or quota exhausted
         """
+        # Add diagnostic logging
+        logger.info(
+            f"[{document_id}][page {page_index}] _extract_with_retry START: "
+            f"extractor_type={'MockExtractor' if settings.demo_mode else 'GeminiExtractor'}, "
+            f"demo_mode={settings.demo_mode}"
+        )
+        
         # Skip quota checks in DEMO_MODE (MockExtractor doesn't use API)
         if not settings.demo_mode:
             # Check quota status BEFORE attempting (only in real API mode)
