@@ -5,10 +5,10 @@ Handles image-to-structured-data extraction with proper error handling.
 """
 import time
 import json
-import base64
 import ssl
+from datetime import datetime, timezone
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 import truststore
 import httpx
 from google import genai
@@ -20,9 +20,15 @@ from app.services.extraction.quota_manager import get_quota_manager, parse_gemin
 
 
 # Pydantic model for structured output
+class CommitmentType(BaseModel):
+    """Explicit fields avoid open dictionary schemas in the SDK response_schema path."""
+    number: str
+    label: Optional[str] = None
+
+
 class CommitmentFormExtraction(BaseModel):
     """Structured extraction model for commitment forms."""
-    model_config = {"extra": "allow"}  # Allow extra properties for Gemini Developer API compatibility
+    model_config = {"extra": "ignore"}  # Omits additionalProperties from the generated schema.
     
     patient_first_name: Optional[str] = Field(None, description="Patient's first name or None if missing/unclear")
     patient_last_name: Optional[str] = Field(None, description="Patient's last name or None if missing/unclear")
@@ -31,8 +37,40 @@ class CommitmentFormExtraction(BaseModel):
     received_date: Optional[str] = Field(None, description="Sample receipt date or None if missing")
     central_numbers: List[str] = Field(default_factory=list, description="List of central laboratory numbers (empty if none)")
     commitment_numbers: List[str] = Field(default_factory=list, description="List of commitment/request numbers (empty if none)")
-    commitment_types: List[dict] = Field(default_factory=list, description="List of {number, label} for each commitment where label is 'התחייבות'/'דרישה'/'דגימה'/null")
+    commitment_types: List[CommitmentType] = Field(default_factory=list, description="Commitment number and its visible label, or null label")
     warnings: List[str] = Field(default_factory=list, description="List of extraction warnings or uncertainties")
+
+
+def _provider_failure(error: Exception) -> ExtractionError:
+    """Classify internally; never return/log SDK bodies, key values or response text."""
+    text = str(error).lower()
+    status = getattr(error, "code", None)
+    try:
+        status = int(status)
+    except (TypeError, ValueError):
+        status = None
+    daily, retry, quota_type = parse_gemini_error(error)
+    if daily or status == 429 or quota_type == "rate_limit":
+        return ExtractionError("Gemini daily quota exhausted" if daily else "Gemini rate limit; retry later",
+                               code="daily_quota" if daily else "rate_limit", retryable=not daily,
+                               retry_after_seconds=retry if retry is not None else (None if daily else 60))
+    if status in (401, 403) or any(term in text for term in
+            ("invalid api key", "api key not valid", "api_key_invalid", "unauthorized", "permission_denied")):
+        return ExtractionError("Gemini credentials are invalid or access is denied", code="invalid_credentials")
+    if "all api keys are disabled" in text:
+        return ExtractionError("No active Gemini credentials; restart after fixing configuration", code="invalid_credentials")
+    if status == 404 or ("model" in text and any(term in text for term in
+                       ("not found", "not supported", "unsupported", "does not support"))):
+        return ExtractionError("Configured Gemini model or API operation is unavailable", code="model_incompatible")
+    if "additionalproperties" in text or ("schema" in text and (status == 400 or isinstance(error, ValueError))):
+        return ExtractionError("Gemini rejected the structured output schema", code="schema_incompatible")
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+        return ExtractionError("Gemini request timed out", code="provider_timeout", retryable=True)
+    if isinstance(error, httpx.TransportError) or (status is not None and status >= 500):
+        return ExtractionError("Gemini service or network is unavailable", code="provider_unavailable", retryable=True)
+    if status in (400, 402):
+        return ExtractionError("Gemini rejected the request; check API configuration or billing", code="request_rejected")
+    return ExtractionError("Gemini extraction failed", code="extraction_failed")
 
 
 # Prompt versions for A/B testing
@@ -289,14 +327,15 @@ Return ONLY valid JSON:
 class GeminiExtractor(Extractor):
     """Gemini Vision API extractor implementation."""
     
-    def __init__(self, model: str = "gemini-2.0-flash-exp", prompt_version: str = "2.0"):
+    def __init__(self, model: Optional[str] = None, prompt_version: str = "2.0"):
         """Initialize Gemini extractor with key manager and quota manager.
         
         Args:
-            model: Model name (default: gemini-2.0-flash-exp)
+            model: Model identifier (defaults to the configured GEMINI_MODEL)
             prompt_version: Prompt version to use ("1.0" or "2.0", default: "2.0")
         """
-        self.model = model
+        from app.core.config import settings
+        self.model = model or settings.gemini_model
         self.prompt_version = prompt_version
         
         # Initialize key manager and quota manager
@@ -365,8 +404,11 @@ class GeminiExtractor(Extractor):
         if not is_available:
             retry_after_str = quota_status.retry_after.isoformat() if quota_status.retry_after else 'unknown'
             logger.warning(f"[{document_id}] Quota exhausted, retry after {retry_after_str}")
+            remaining = max(0, (quota_status.retry_after - datetime.now(timezone.utc)).total_seconds()) if quota_status.retry_after else None
             raise ExtractionError(
-                f"Gemini quota exhausted for {self.model}. Retry after {retry_after_str}."
+                "Gemini daily quota exhausted" if quota_status.quota_type == "daily_quota" else "Gemini rate limit; retry later",
+                code=quota_status.quota_type, retryable=quota_status.quota_type == "rate_limit",
+                retry_after_seconds=remaining
             )
         
         # Track request and check limits
@@ -377,21 +419,16 @@ class GeminiExtractor(Extractor):
         
         if not ok:
             logger.warning(f"[{document_id}] Request tracking failed: {reason}")
-            raise ExtractionError(f"Quota limit exceeded: {reason}")
+            daily = bool(reason and "daily" in reason.lower())
+            raise ExtractionError("Local Gemini safety budget exhausted" if daily else "Local Gemini rate limit",
+                                  code="daily_quota" if daily else "rate_limit", retryable=not daily,
+                                  retry_after_seconds=None if daily else 60)
         
-        # Get next API key with round-robin
-        key_select_start = time.time()
-        key_id, key_value = self.key_manager.get_next_key()
-        key_select_elapsed = (time.time() - key_select_start) * 1000
-        logger.info(f"[{document_id}] Selected key '{key_id}' in {key_select_elapsed:.1f}ms")
-        
+        client = None
+        httpx_client = None
+        key_id = None
         try:
-            # Encode image to base64
-            encode_start = time.time()
-            image_b64 = base64.b64encode(image).decode('utf-8')
-            encode_elapsed = (time.time() - encode_start) * 1000
-            logger.info(f"[{document_id}] Image encoded in {encode_elapsed:.1f}ms ({len(image)} bytes)")
-            
+            key_id, key_value = self.key_manager.get_next_key()
             # Detect image format from magic bytes
             format_start = time.time()
             if image.startswith(b'\x89PNG'):
@@ -401,7 +438,7 @@ class GeminiExtractor(Extractor):
             elif image.startswith(b'%PDF'):
                 mime_type = 'application/pdf'
             else:
-                raise ExtractionError(f"Unsupported image format for {document_id}")
+                raise ExtractionError("Unsupported document format", code="invalid_input")
             format_elapsed = (time.time() - format_start) * 1000
             logger.info(f"[{document_id}] Format detected: {mime_type} in {format_elapsed:.1f}ms")
             
@@ -420,7 +457,7 @@ class GeminiExtractor(Extractor):
             
             # Create custom HTTPX client with our transport
             httpx_client = httpx.Client(
-                transport=self.http_transport,
+                transport=httpx.HTTPTransport(verify=self.ssl_context, local_address="0.0.0.0"),
                 timeout=60.0  # 60 seconds timeout
             )
             
@@ -428,6 +465,7 @@ class GeminiExtractor(Extractor):
             # NOTE: Use 'httpx_client' parameter, not 'client' (which is not supported)
             client = genai.Client(
                 api_key=key_value,
+                vertexai=False,  # Explicit Developer API; no implicit enterprise routing.
                 http_options=types.HttpOptions(
                     httpx_client=httpx_client,  # Correct parameter name
                     timeout=60000,  # 60 seconds in milliseconds
@@ -447,7 +485,6 @@ class GeminiExtractor(Extractor):
                 model=self.model,
                 contents=[image_part, self.prompt],
                 config=types.GenerateContentConfig(
-                    temperature=0.1,  # Low temperature for consistent extraction
                     response_mime_type="application/json",
                     response_schema=CommitmentFormExtraction,  # Pydantic schema for structured output
                 )
@@ -462,7 +499,7 @@ class GeminiExtractor(Extractor):
             # Parse response
             parse_start = time.time()
             if not response.text:
-                raise ExtractionError(f"Empty response from Gemini for {document_id}")
+                raise ExtractionError("Gemini returned no usable output", code="invalid_response")
             
             # Extract JSON from response
             response_text = response.text.strip()
@@ -484,11 +521,16 @@ class GeminiExtractor(Extractor):
                     response_text = response_text[json_start:json_end].strip()
                     fields = json.loads(response_text)
                 else:
-                    raise ExtractionError(f"Failed to parse JSON from Gemini: {e}")
+                    raise ExtractionError("Gemini returned invalid JSON", code="invalid_response") from None
             
             parse_elapsed = (time.time() - parse_start) * 1000
             logger.info(f"[{document_id}] JSON parsed in {parse_elapsed:.1f}ms")
             
+            try:
+                fields = CommitmentFormExtraction.model_validate(fields, strict=True).model_dump()
+            except ValidationError:
+                raise ExtractionError("Gemini returned an invalid extraction structure", code="invalid_response") from None
+
             # Context-aware commitment filtering (uses standalone commitment_rules module)
             from app.services.extraction.commitment_rules import filter_commitments
             
@@ -540,39 +582,27 @@ class GeminiExtractor(Extractor):
                 raw_response=response_text
             )
             
-        except Exception as e:
-            # Handle timeout errors
-            if "timeout" in str(e).lower():
-                raise TimeoutError(f"Gemini request timed out for {document_id}: {e}")
-            
-            # Parse error to determine if it's a quota/rate-limit issue
-            is_quota, retry_seconds, quota_type = parse_gemini_error(e)
-            
-            if is_quota or "429" in str(e) or "resource_exhausted" in str(e).lower():
-                # Quota exhausted - mark quota manager (NOT key as failed)
+        except ExtractionError:
+            raise
+        except Exception as error:
+            failure = _provider_failure(error)
+            if failure.code in ("daily_quota", "rate_limit"):
                 self.quota_manager.mark_quota_exhausted(
-                    self.model,
-                    str(e),
-                    retry_seconds,
-                    quota_type,
-                    key_id
-                )
-                raise ExtractionError(f"Gemini quota exhausted: {e}")
-            
-            # Check for key-specific errors (auth/invalid key)
-            error_str = str(e).lower()
-            if any(indicator in error_str for indicator in ["401", "403", "unauthorized", "invalid api key", "api key not valid"]):
-                # Key-specific error - mark key as failed
-                self.key_manager.mark_key_failed(key_id, str(e))
-                raise ExtractionError(f"API key error: {type(e).__name__}")
-            
-            # 5xx server errors (transient, don't mark key as failed)
-            if "5" in str(e)[:3]:
-                raise ExtractionError(f"Gemini server error: {e}")
-            
-            # Other errors
-            raise ExtractionError(f"Extraction failed for {document_id}: {e}")
-    
+                    self.model, str(failure), failure.retry_after_seconds, failure.code, key_id)
+            elif failure.code == "invalid_credentials" and key_id is not None:
+                self.key_manager.mark_key_failed(key_id, "invalid_credentials")
+            raise failure from None
+        finally:
+            # Each request owns its transport, including after failed provider calls.
+            try:
+                if client is not None and callable(getattr(client, "close", None)):
+                    client.close()
+            except Exception:
+                logger.warning("Gemini client cleanup failed; details withheld")
+            finally:
+                if httpx_client is not None:
+                    httpx_client.close()
+
     def _validate_output(self, fields: dict) -> None:
         """Validate extracted fields structure.
         

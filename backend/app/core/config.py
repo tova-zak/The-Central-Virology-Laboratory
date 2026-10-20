@@ -1,8 +1,17 @@
 """Application configuration management using Pydantic Settings."""
 from pathlib import Path
+import os
 from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Explicit selection only: never search other worktrees or copy credential files.
+ENV_FILE_PATH = Path(os.environ.get(
+    "APP_ENV_FILE", str(Path(__file__).resolve().parents[3] / ".env")
+)).expanduser().resolve()
+if os.environ.get("APP_ENV_FILE") and not ENV_FILE_PATH.is_file():
+    raise ValueError("APP_ENV_FILE must identify an existing environment file")
 
 
 class Settings(BaseSettings):
@@ -15,7 +24,7 @@ class Settings(BaseSettings):
     
     # Gemini API Configuration
     gemini_api_key: str = ""  # Primary key (optional if using numbered keys)
-    gemini_model: str = "gemini-3.8-flash"  # Updated to latest stable free-tier model
+    gemini_model: str = "gemini-3.8-flash"
     
     # Demo Mode (for testing without Gemini API calls)
     demo_mode: bool = False  # Set to true to use mock extractor
@@ -85,7 +94,7 @@ class Settings(BaseSettings):
                 raise ValueError("Cloud requires explicit frontend CORS origins")
     
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).parent.parent.parent.parent / ".env",
+        env_file=ENV_FILE_PATH,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra='ignore',  # Allow extra env vars (e.g., GEMINI_API_1-8 for key manager)

@@ -6,7 +6,8 @@ thread-safe round-robin key selection without exposing sensitive values.
 import logging
 import os
 from typing import List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from dotenv import dotenv_values
 from threading import Lock
 from datetime import datetime, timezone
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 class ApiKeyInfo:
     """Information about a single API key."""
     key_id: str  # Internal identifier like "key_1", "key_2"
-    key_value: str  # The actual API key (never logged)
+    key_value: str = field(repr=False)  # The actual API key (never logged/repr'd)
     env_var_name: str  # Original environment variable name
     is_active: bool = True  # Whether this key is currently usable
     last_used: Optional[datetime] = None
@@ -54,19 +55,21 @@ class GeminiKeyManager:
         """Load API keys from environment variables."""
         raw_keys = []
         seen_values = set()
+        from app.core.config import ENV_FILE_PATH
+        file_values = {name.upper(): value for name, value in dotenv_values(ENV_FILE_PATH).items()}
         
         for env_var in self.KEY_ENV_VARS:
-            key_value = os.getenv(env_var, "").strip()
+            # Same file as Settings; explicit process variables take precedence.
+            key_value = (os.environ.get(env_var, file_values.get(env_var)) or "").strip()
             
             # Skip empty keys
             if not key_value:
                 continue
             
-            # Detect duplicates (compare first 10 chars to avoid full key comparison in logs)
-            key_prefix = key_value[:min(10, len(key_value))]
+            # Compare full values in memory, never log any part of a credential.
             if key_value in seen_values:
                 logger.warning(
-                    f"Duplicate API key detected in {env_var} (prefix: {key_prefix}...), skipping"
+                    f"Duplicate API key variable {env_var}, skipping"
                 )
                 continue
             

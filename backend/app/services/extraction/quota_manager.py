@@ -16,14 +16,12 @@ from threading import Lock
 logger = logging.getLogger(__name__)
 
 
-# Conservative quota limits for Free Tier (per project, not per key)
-# NOTE: These limits vary by model and account standing.
-# For gemini-3.8-flash Free Tier (as of Oct 2026): 5 RPM, 20 RPD, 250K TPM
-# Always check AI Studio for your project's actual limits: https://aistudio.google.com/
+# Local conservative safety budgets, NOT the provider's actual project quotas.
+# Actual limits depend on project/model/tier; rotating keys does not increase them.
 FREE_TIER_LIMITS = {
-    "requests_per_minute": 5,    # Free Tier for gemini-3.8-flash
-    "requests_per_day": 20,      # Free Tier for gemini-3.8-flash (very limited!)
-    "max_batch_requests": 15,    # Stop batch early to preserve quota
+    "requests_per_minute": 5,
+    "requests_per_day": 20,
+    "max_batch_requests": 15,
 }
 
 
@@ -118,15 +116,14 @@ class QuotaManager:
                     f"(in {retry_info_seconds/3600:.1f} hours)"
                 )
             else:
-                # No retry info - assume daily quota resets at midnight UTC next day
+                # No provider RetryInfo: apply conservative local cooldown.
                 if quota_type == "daily_quota":
-                    next_midnight = (exhausted_at + timedelta(days=1)).replace(
-                        hour=0, minute=0, second=0, microsecond=0
-                    )
-                    retry_after = next_midnight
+                    # Conservative cooldown, not a claim about the provider reset time.
+                    # Gemini daily quotas reset at Pacific midnight, not UTC midnight.
+                    retry_after = exhausted_at + timedelta(days=1)
                     logger.warning(
                         f"Daily quota exhausted for {model} via {key_id or 'unknown_key'}. "
-                        f"Estimated reset at: {retry_after.isoformat()}"
+                        f"Local cooldown until: {retry_after.isoformat()}"
                     )
                 else:
                     # Rate limit - retry after 1 minute
@@ -142,7 +139,7 @@ class QuotaManager:
                 exhausted_at=exhausted_at,
                 retry_after=retry_after,
                 retry_info_seconds=retry_info_seconds,
-                error_message=error_message,
+                error_message="Daily quota exhausted" if quota_type == "daily_quota" else "Rate limit reached",
                 affected_key_id=key_id
             )
             
@@ -253,21 +250,12 @@ def parse_gemini_error(error: Exception) -> tuple[bool, Optional[float], str]:
     """
     error_str = str(error).lower()
     
-    # Check for quota exhaustion indicators
-    is_daily_quota = (
-        "quota exceeded" in error_str or
-        "resource_exhausted" in error_str or
-        "free tier" in error_str or
-        "free_tier" in error_str or
-        "generaterequestsperdayperprojectpermodel" in error_str
-    )
-    
-    # Check for rate limit (different from daily quota)
-    is_rate_limit = (
-        "rate limit" in error_str or
-        "too many requests" in error_str
-    ) and not is_daily_quota
-    
+    # RESOURCE_EXHAUSTED/429 alone does not distinguish daily, minute or spend limits.
+    is_daily_quota = any(term in error_str for term in
+                         ("perday", "per day", "daily quota", "daily_quota"))
+    is_rate_limit = (getattr(error, "code", None) == 429 or any(term in error_str for term in
+                     ("429", "resource_exhausted", "resource exhausted", "rate limit", "too many requests", "quota exceeded"))) and not is_daily_quota
+
     # Try to extract retry info
     retry_seconds = None
     try:
@@ -276,7 +264,7 @@ def parse_gemini_error(error: Exception) -> tuple[bool, Optional[float], str]:
             # Google API sometimes includes: "retryDelay": "13.5h" or similar
             import re
             # Match patterns like: 13.5h, 3600s, 60m
-            time_pattern = r'(\d+(?:\.\d+)?)\s*(h|hour|hours|m|min|minutes|s|sec|seconds)'
+            time_pattern = r'(?:retrydelay[\"\':\s]+|retry(?:\s+after|\s+in)?[\"\':\s]+)(\d+(?:\.\d+)?)\s*(hours?|h|minutes?|min|m|seconds?|sec|s)\b'
             matches = re.findall(time_pattern, error_str)
             
             if matches:
@@ -285,9 +273,9 @@ def parse_gemini_error(error: Exception) -> tuple[bool, Optional[float], str]:
                 
                 if unit in ['h', 'hour', 'hours']:
                     retry_seconds = value * 3600
-                elif unit in ['m', 'min', 'minutes']:
+                elif unit in ['m', 'min', 'minute', 'minutes']:
                     retry_seconds = value * 60
-                elif unit in ['s', 'sec', 'seconds']:
+                elif unit in ['s', 'sec', 'second', 'seconds']:
                     retry_seconds = value
     except Exception as e:
         logger.warning(f"Failed to parse retry info: {e}")

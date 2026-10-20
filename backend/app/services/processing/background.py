@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.hybrid_config import get_hybrid_config
 from app.services.documents.renderer import DocumentRenderer
 from app.services.extraction.gemini_adapter import GeminiExtractor
-from app.services.extraction.quota_manager import get_quota_manager, parse_gemini_error
+from app.services.extraction.extractor import ExtractionError
 from app.services.validation import validator
 from app.services.storage import get_storage_backend
 from app.domain.models import TestRecord, FieldValue, ExtractionState, ReviewState, LogicalForm, Sample, CommitmentRecord
@@ -270,6 +270,7 @@ class BackgroundProcessor:
             
             commitment_records = []
             errors = []
+            stop_for_provider_error = False
             
             # Process each file
             for file_index, file_path in enumerate(all_files):
@@ -350,28 +351,17 @@ class BackgroundProcessor:
                             
                             # Check if quota exhausted (ONLY check string, do NOT reference undefined variables)
                             error_str = str(e).lower()
-                            if "quota exhausted" in error_str or "gemini daily quota" in error_str:
+                            if getattr(e, "code", None) == "daily_quota" or "quota exhausted" in error_str or "gemini daily quota" in error_str:
                                 logger.error(f"[{batch_id}][{document_id}] Quota exhausted, stopping batch")
                                 job.status = ProcessingStatus.QUOTA_EXHAUSTED
                                 
-                                # Only access quota_manager if NOT in demo mode
-                                if not settings.demo_mode:
-                                    quota_manager = get_quota_manager()
-                                    exhausted_quotas = quota_manager.get_all_exhausted_quotas()
-                                    
-                                    if exhausted_quotas:
-                                        quota_info = list(exhausted_quotas.values())[0]
-                                        job.error = (
-                                            f"מכסת Gemini החינמית הסתיימה. "
-                                            f"ניתן לנסות שוב ב-{quota_info.retry_after.strftime('%Y-%m-%d %H:%M UTC') if quota_info.retry_after else 'מועד לא ידוע'}."
-                                        )
-                                    else:
-                                        job.error = "מכסת Gemini החינמית הסתיימה."
-                                else:
-                                    job.error = "Quota exhausted error in DEMO_MODE (should not happen)"
-                                
+                                job.error = str(e) if isinstance(e, ExtractionError) else "Extraction quota exhausted"
+
+                                errors.append({"document_id": document_id, "page_index": page_index,
+                                               "error": str(e) if isinstance(e, ExtractionError) else "Quota exhausted",
+                                               "error_code": "daily_quota"})
                                 break
-                            
+
                             # For other errors, create a pending commitment record
                             try:
                                 error_msg = "Page extraction failed; manual review required"
@@ -391,12 +381,18 @@ class BackgroundProcessor:
                             errors.append({
                                 "document_id": document_id,
                                 "page_index": page_index,
-                                "error": "Page extraction failed; manual review required",
+                                "error": str(e) if isinstance(e, ExtractionError) else "Page extraction failed; manual review required",
+                                "error_code": e.code if isinstance(e, ExtractionError) else "extraction_failed",
+                                "retry_after_seconds": e.retry_after_seconds if isinstance(e, ExtractionError) else None,
                                 "error_type": type(e).__name__
                             })
+                            if isinstance(e, ExtractionError) and e.code in (
+                                    "invalid_credentials", "model_incompatible", "schema_incompatible", "request_rejected", "rate_limit"):
+                                stop_for_provider_error = True
+                                break
                     
                     # If quota exhausted, stop processing files
-                    if job.status == ProcessingStatus.QUOTA_EXHAUSTED:
+                    if job.status == ProcessingStatus.QUOTA_EXHAUSTED or stop_for_provider_error:
                         break
                 
                 except Exception as e:
@@ -888,106 +884,27 @@ class BackgroundProcessor:
             asyncio.TimeoutError: If extraction times out
             Exception: If extraction fails permanently or quota exhausted
         """
-        # Add diagnostic logging
-        logger.info(
-            f"[{document_id}][page {page_index}] _extract_with_retry START: "
-            f"extractor_type={'MockExtractor' if settings.demo_mode else 'GeminiExtractor'}, "
-            f"demo_mode={settings.demo_mode}"
-        )
-        
-        # Skip quota checks in DEMO_MODE (MockExtractor doesn't use API)
-        if not settings.demo_mode:
-            # Check quota status BEFORE attempting (only in real API mode)
-            quota_manager = get_quota_manager()
-            model = self._extractor.model
-            
-            is_available, quota_status = quota_manager.check_quota_available(model)
-            
-            if not is_available:
-                # Quota exhausted - don't even try
-                logger.error(
-                    f"[{document_id}] Quota exhausted for {model}. "
-                    f"Blocked since {quota_status.exhausted_at.isoformat()}. "
-                    f"Retry after: {quota_status.retry_after.isoformat() if quota_status.retry_after else 'unknown'}"
-                )
-                raise Exception(
-                    f"Gemini quota exhausted ({quota_status.quota_type}). "
-                    f"Retry after: {quota_status.retry_after.isoformat() if quota_status.retry_after else 'unknown'}"
-                )
-        
-        
-        last_exception = None
-        
+        # The adapter owns quota classification. Retry only sanitized, transient failures.
         for attempt in range(self._max_retries + 1):
             try:
-                logger.info(f"[{document_id}] {'MockExtractor' if settings.demo_mode else 'Gemini'} extraction (attempt {attempt + 1}/{self._max_retries + 1})")
-                
-                # Run extraction with timeout
-                extraction_result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self._extractor.extract,
-                        image=image_bytes,
-                        document_id=document_id,
-                        page_index=page_index
-                    ),
-                    timeout=self._gemini_timeout_seconds
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self._extractor.extract, image=image_bytes,
+                                      document_id=document_id, page_index=page_index),
+                    timeout=self._gemini_timeout_seconds,
                 )
-                
-                logger.info(f"[{document_id}] Gemini responded in {extraction_result.processing_time_ms:.0f}ms")
-                return extraction_result
-            
             except asyncio.TimeoutError:
-                last_exception = asyncio.TimeoutError(f"Gemini timeout after {self._gemini_timeout_seconds}s")
-                logger.warning(f"[{document_id}] Attempt {attempt + 1} timed out")
-                
-                if attempt < self._max_retries:
-                    logger.info(f"[{document_id}] Retrying in {self._retry_delay}s...")
-                    await asyncio.sleep(self._retry_delay)
-                else:
-                    raise last_exception
-            
-            except Exception as e:
-                error_str = str(e).lower()
-                
-                # Parse error to detect quota exhaustion
-                is_quota_exhausted, retry_seconds, quota_type = parse_gemini_error(e)
-                
-                if is_quota_exhausted:
-                    # Daily quota exhausted - STOP ALL RETRIES
-                    logger.error(
-                        f"[{document_id}] Daily quota exhausted"
-                    )
-                    quota_manager.mark_quota_exhausted(
-                        model=model,
-                        error_message=str(e),
-                        retry_info_seconds=retry_seconds,
-                        quota_type=quota_type
-                    )
-                    # Re-raise to stop processing
-                    raise Exception(
-                        f"Gemini daily quota exhausted. "
-                        f"Retry after: {quota_manager.get_all_exhausted_quotas()[model].retry_after.isoformat() if model in quota_manager.get_all_exhausted_quotas() else 'unknown'}"
-                    )
-                
-                # Check for transient errors (rate limit, 503, timeout)
-                if "429" in error_str or "503" in error_str or "timeout" in error_str:
-                    last_exception = e
-                    logger.warning(f"[{document_id}] Transient error (attempt {attempt + 1})")
-                    
-                    if attempt < self._max_retries:
-                        # Exponential backoff for rate limits
-                        delay = self._retry_delay * (2 ** attempt)
-                        logger.info(f"[{document_id}] Retrying in {delay}s...")
-                        await asyncio.sleep(delay)
-                    else:
-                        raise last_exception
-                else:
-                    # Permanent error - don't retry
-                    logger.error(f"[{document_id}] Permanent extraction error")
+                # Cancelling to_thread cannot stop the HTTP operation: never start an overlapping retry.
+                raise ExtractionError("Extraction timed out", code="provider_timeout") from None
+            except ExtractionError as failure:
+                if not failure.retryable or attempt == self._max_retries:
                     raise
-        
-        # Should not reach here
-        raise last_exception or Exception("Unknown extraction error")
+                delay = max(self._retry_delay * (2 ** attempt), failure.retry_after_seconds or 0)
+                if delay > 30:
+                    # Surface provider cooldown instead of sleeping or rotating keys around it.
+                    raise
+                logger.warning("Transient extraction failure (%s); bounded retry scheduled", failure.code)
+                await asyncio.sleep(delay)
+
 
 
 # Global processor instance
