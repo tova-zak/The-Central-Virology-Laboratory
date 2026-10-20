@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     temp_storage_ttl_hours: int = 24
     temp_storage_path: str = "temp"
     
+    # Supabase Configuration (optional - for cloud persistence)
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+    supabase_bucket_name: str = "virology-lab-uploads"
+    
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent.parent / ".env",
         env_file_encoding="utf-8",

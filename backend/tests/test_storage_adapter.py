@@ -294,43 +294,168 @@ def test_get_storage_backend_returns_json_storage_by_default(temp_storage_path):
     reason="Supabase live tests require SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables"
 )
 def test_supabase_adapter_save_and_load():
-    """Test SupabaseStorageAdapter save/load cycle (LIVE TEST - SKIPPED WITHOUT ENV).
+    """Test SupabaseStorageAdapter save/load cycle with REAL execution.
     
-    To run this test:
-    1. Set up Supabase project
-    2. Create batches table:
-        CREATE TABLE batches (
-            batch_id TEXT PRIMARY KEY,
-            batch_data JSONB NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        );
-    3. Set environment variables:
-        - SUPABASE_URL
-        - SUPABASE_SERVICE_KEY
-        - SUPABASE_BUCKET_NAME
+    REAL TEST - Saves batch to Supabase Postgres, loads it back via fresh adapter.
     """
     from app.services.storage.storage_adapter import SupabaseStorageAdapter
     
     storage = SupabaseStorageAdapter()
     
-    batch_id = "test_supabase_batch"
+    batch_id = "test_supabase_save_load"
     batch_data = {
         "batch_id": batch_id,
         "status": "completed",
-        "test_records": []
+        "test_records": [
+            {
+                "test_id": "test_001",
+                "patient_first_name": {
+                    "raw_value": "יוסי",
+                    "reviewed_value": None,
+                    "extraction_state": "extracted"
+                }
+            }
+        ],
+        "commitment_records": []
     }
     
-    # Save
-    storage.save_batch(batch_id, batch_data)
+    try:
+        # Save to Supabase
+        storage.save_batch(batch_id, batch_data)
+        
+        # Create fresh adapter instance (simulates restart)
+        storage_after_restart = SupabaseStorageAdapter()
+        
+        # Load from Supabase
+        loaded = storage_after_restart.load_batch(batch_id)
+        
+        assert loaded is not None, "Batch should exist in Supabase"
+        assert loaded["batch_id"] == batch_id
+        assert loaded["status"] == "completed"
+        assert len(loaded["test_records"]) == 1
+        assert loaded["test_records"][0]["test_id"] == "test_001"
+        
+    finally:
+        # Cleanup
+        storage.delete_batch(batch_id)
+
+
+@pytest.mark.skipif(
+    not (os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY")),
+    reason="Supabase live tests require environment variables"
+)
+def test_supabase_adapter_reviewed_values_persist():
+    """Test that human-confirmed corrections survive Supabase persistence.
     
-    # Load
-    loaded = storage.load_batch(batch_id)
-    assert loaded is not None
-    assert loaded["batch_id"] == batch_id
+    REAL TEST - Verifies relationship_status and reviewed_value fields survive save/load.
+    """
+    from app.services.storage.storage_adapter import SupabaseStorageAdapter
     
-    # Cleanup
-    storage.delete_batch(batch_id)
+    storage = SupabaseStorageAdapter()
+    
+    batch_id = "test_supabase_reviewed_persist"
+    batch_data = {
+        "batch_id": batch_id,
+        "status": "in_review",
+        "test_records": [],
+        "commitment_records": [
+            {
+                "commitment_record_id": "comm_001",
+                "test_id": "test_001",
+                "commitment_number": {
+                    "raw_value": "AUTO123",
+                    "reviewed_value": "MANUAL456",  # Human correction
+                    "extraction_state": "reviewed"
+                },
+                "relationship_status": "verified"  # Human verified relationship
+            }
+        ]
+    }
+    
+    try:
+        # Save with corrections
+        storage.save_batch(batch_id, batch_data)
+        
+        # Fresh adapter instance (new process simulation)
+        storage_restarted = SupabaseStorageAdapter()
+        loaded = storage_restarted.load_batch(batch_id)
+        
+        assert loaded is not None
+        commitment = loaded["commitment_records"][0]
+        assert commitment["commitment_number"]["reviewed_value"] == "MANUAL456", \
+            "Human correction MUST survive Supabase persistence"
+        assert commitment["relationship_status"] == "verified", \
+            "Human-confirmed relationship MUST survive Supabase persistence"
+        
+    finally:
+        storage.delete_batch(batch_id)
+
+
+@pytest.mark.skipif(
+    not (os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY")),
+    reason="Supabase live tests require environment variables"
+)
+def test_supabase_adapter_file_upload_and_download():
+    """Test Supabase Storage bucket upload/download of files.
+    
+    REAL TEST - Uploads synthetic file to private bucket, downloads it back.
+    """
+    from app.services.storage.storage_adapter import SupabaseStorageAdapter
+    
+    storage = SupabaseStorageAdapter()
+    
+    batch_id = "test_file_upload"
+    file_name = "test_synthetic.txt"
+    file_content = b"Synthetic test file content - Hebrew test"
+    
+    try:
+        # Upload file to bucket
+        file_path = storage.upload_file(batch_id, file_name, file_content)
+        
+        assert file_path == f"{batch_id}/{file_name}"
+        
+        # Download file back
+        downloaded_content = storage.download_file(batch_id, file_name)
+        
+        assert downloaded_content == file_content, \
+            "Downloaded content must match uploaded content"
+        
+    finally:
+        # Cleanup - delete file from bucket
+        try:
+            storage.client.storage.from_(storage.bucket_name).remove([f"{batch_id}/{file_name}"])
+        except Exception:
+            pass  # Best effort cleanup
+
+
+@pytest.mark.skipif(
+    not (os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY")),
+    reason="Supabase live tests require environment variables"
+)
+def test_supabase_bucket_is_private():
+    """Test that Supabase bucket public flag is false (SECURITY CHECK).
+    
+    REAL TEST - Verifies bucket is private (not publicly accessible).
+    """
+    from app.services.storage.storage_adapter import SupabaseStorageAdapter
+    
+    storage = SupabaseStorageAdapter()
+    
+    # Get bucket details
+    bucket_list = storage.client.storage.list_buckets()
+    
+    # Find our bucket
+    our_bucket = None
+    for bucket in bucket_list:
+        if bucket.name == storage.bucket_name:
+            our_bucket = bucket
+            break
+    
+    assert our_bucket is not None, f"Bucket {storage.bucket_name} should exist"
+    
+    # Check public flag
+    assert our_bucket.public == False, \
+        f"Bucket {storage.bucket_name} MUST be private (public=False) for security"
 
 
 # ============================================================================

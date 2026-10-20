@@ -66,9 +66,12 @@ class SupabaseStorageAdapter:
     
     def __init__(self):
         """Initialize Supabase connection."""
-        self.supabase_url = os.getenv("SUPABASE_URL")
-        self.supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-        self.bucket_name = os.getenv("SUPABASE_BUCKET_NAME", "virology-lab-uploads")
+        # Load from app config (pydantic-settings reads .env)
+        from app.core.config import settings
+        
+        self.supabase_url = settings.supabase_url
+        self.supabase_key = settings.supabase_service_key
+        self.bucket_name = settings.supabase_bucket_name
         
         if not self.supabase_url or not self.supabase_key:
             raise ValueError(
@@ -158,11 +161,12 @@ def get_storage_backend() -> StorageBackend:
         SupabaseStorageAdapter if SUPABASE_URL set (cloud/production)
         JSONStorage otherwise (local dev/test)
     """
-    if os.getenv("SUPABASE_URL"):
+    from app.core.config import settings
+    
+    if settings.supabase_url:
         # Cloud mode: use Supabase
         return SupabaseStorageAdapter()
     else:
         # Local mode: use JSON files
         from app.services.storage.json_storage import JSONStorage
-        from app.core.config import settings
         return JSONStorage(base_path=Path(settings.temp_storage_path))
