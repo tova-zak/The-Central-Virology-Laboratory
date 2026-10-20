@@ -55,6 +55,10 @@ class ProcessingJob:
 
 class BackgroundProcessor:
     """Manages background processing jobs."""
+
+    @property
+    def extractor_name(self) -> str:
+        return type(self._extractor).__name__
     
     def __init__(self):
         self._jobs: Dict[str, ProcessingJob] = {}

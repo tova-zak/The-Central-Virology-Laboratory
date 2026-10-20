@@ -1,9 +1,11 @@
 # Render deployment runbook
 
-Updated 2026-10-20. **Staging preparation only; clinical production is blocked.**
+Updated 2026-10-20. **Restricted real-extraction staging; clinical production is blocked.**
 No cloud deployment, schema migration, RLS change, paid provisioning, GitHub push or
 Gemini request was performed. Earlier application/Supabase testing was performed by
-the owner. This task uses source inspection and offline static validation only.
+the owner. This revision uses focused offline configuration/contract checks only.
+Staging accepts synthetic or institutionally approved non-sensitive documents only;
+an API key does not authorize clinical-data processing.
 
 ## 1. Checkpoint and release boundaries
 
@@ -14,9 +16,11 @@ Commit message: `feat: integrate Supabase persistence and prepare secure deploym
 Exactly the 20 files listed in docs/PERSISTENCE_READINESS_AUDIT.md were committed.
 This is an implementation checkpoint, not production runtime validation. The previous
 57 passing tests/build relate to baseline `71c56ee`, not the persistence or deployment edits.
-The separate 22-file deployment-preparation milestone is recorded by the current
-`chore: prepare Render staging and production security gates` checkpoint. Neither
-checkpoint constitutes runtime release validation.
+The separate 22-file deployment-preparation milestone is recorded by
+`6ef3843c8db6c43a29bfcd9c541b82685b305625` (`chore: prepare Render staging and production
+security gates`). Local Gemini integration is checkpointed at
+`16dd6599d45c6b375c73ff6b0583ffa275dd7ea6`. This restricted staging-real revision builds
+on those implementation milestones. None constitutes runtime release validation.
 
 Use the existing worktree and branch; never reset or clean to hide artifacts:
 
@@ -47,12 +51,14 @@ Push approval and deployment/resource approval are separate decisions.
 | Environment | Configuration | Status |
 |---|---|---|
 | Local | existing source/Docker Compose; local storage allowed | synthetic development |
-| Staging/demo | render.yaml | restricted synthetic demo; focused runtime validation still required |
+| Staging real extraction | render.yaml; DEPLOYMENT_MODE=staging-real, DEMO_MODE=false | restricted real Gemini; synthetic or institutionally approved non-sensitive documents only |
+| Staging mock demo | explicit DEPLOYMENT_MODE=staging (or cloud), DEMO_MODE=true override | MockExtractor; never used as a fallback for real extraction failures |
 | Production | render.production.yaml.template | NON-DEPLOYABLE template; paid resources and unresolved region/branch; code fails closed |
 
 Use distinct Supabase projects/buckets/credentials, Render services and identity
 applications. Do not connect staging to a clinical project. The legacy cloud mode is
-a staging compatibility alias. The production template is not a deployable release:
+a mock-staging compatibility alias. Real extraction requires the separate explicit
+staging-real mode, which rejects DEMO_MODE=true. The production template is not a deployable release:
 its API is blocked and its worker only prints a blocker and exits without I/O.
 
 ## 3. Staging prerequisites
@@ -89,11 +95,15 @@ automatic deployments are disabled. Obtain approval BEFORE clicking Create/Apply
    virology-lab-staging-frontend. Do not silently replace/delete services owned by an
    existing Blueprint. If those names conflict, stop and reconcile ownership first.
 3. Review the resource plan and region. Staging's existing Frankfurt selection is for
-   synthetic data only, not institutional clinical residency approval. No worker or
+   synthetic or specifically approved non-sensitive data only, not clinical residency approval. No worker or
    Key Value service is created by the staging Blueprint.
 4. Fill backend secrets/public settings when prompted, then review the entire plan.
    New secrets on existing services must be added manually under **Environment**;
    sync:false is not a secret-value update mechanism for an existing service.
+   Set GEMINI_API_KEY and GEMINI_MODEL on the BACKEND only. Never import/upload a
+   local .env file, create a Gemini secret file or add keys to frontend variables.
+   Set DEPLOYMENT_MODE=staging-real and DEMO_MODE=false as defined in render.yaml.
+   Keep the frontend VITE_DEPLOYMENT_MODE=staging; it does not select the extractor.
 5. Apply only after the release/deployment authorization. Keep **Auto-Deploy > Off**.
 
 If the backend/frontend URLs are not known until creation, the operator must plan
@@ -156,8 +166,10 @@ not implemented runtime controls and must not be treated as unlocking production
 
 | Name | Scope | Description |
 |---|---|---|
-| DEPLOYMENT_MODE | backend | selects local, protected staging/cloud alias, or blocked production |
-| DEMO_MODE | backend | synthetic extractor selector; required for hosted staging |
+| DEPLOYMENT_MODE | backend | staging-real for restricted real extraction; staging/cloud retain mock-only enforcement; production is blocked |
+| DEMO_MODE | backend | false required for staging-real; true required for staging/cloud mock mode |
+| GEMINI_API_KEY | backend secret only | configure through Render Environment; required by the Blueprint; never in Git, frontend or a secret file |
+| GEMINI_MODEL | backend | supported project model ID; enter gemini-3.8-flash if available to the project; no model-access API check has been performed |
 | SUPABASE_URL | backend only | project API endpoint; dedicated project per environment |
 | SUPABASE_SERVICE_KEY | backend secret | privileged database/Storage credential; never a Vite variable |
 | SUPABASE_BUCKET_NAME | backend | existing private original-document bucket |
@@ -181,7 +193,53 @@ not implemented runtime controls and must not be treated as unlocking production
 | VITE_API_URL | frontend build, public | actual HTTPS backend origin |
 | VITE_DEPLOYMENT_MODE | frontend build, public | validates hosted-versus-local API configuration |
 | REDIS_URL | future API/worker secret | proposed internal queue connection; no consumer implemented |
-| GEMINI_API_KEY | future approved worker secret | real extraction credential; never configured for this staging task |
+
+### Exact restricted staging settings
+
+Manually configure these eight backend names in Render **Environment** (sync:false
+prompts apply to newly created Blueprint services; add them manually on existing ones):
+
+- GEMINI_API_KEY: the staging Gemini Developer API credential; keep its value secret.
+- GEMINI_MODEL: the intended project-supported model ID (currently gemini-3.8-flash).
+- SUPABASE_URL: the dedicated staging project's exact HTTPS API origin.
+- SUPABASE_SERVICE_KEY: its backend-only privileged credential; keep its value secret.
+- SUPABASE_BUCKET_NAME: the existing private staging bucket.
+- API_USERNAME and API_PASSWORD: the restricted staging login; password at least 16 characters.
+- CORS_ORIGINS: a JSON array containing the actual frontend HTTPS origin, without trailing slash.
+
+The Blueprint supplies these non-secret backend settings; retain them:
+
+```text
+DEPLOYMENT_MODE=staging-real
+DEMO_MODE=false
+HYBRID_ENGINE_ENABLED=false
+HYBRID_ENABLE_PREPROCESSING=false
+HYBRID_ENABLE_OCR=false
+HYBRID_ENABLE_HYBRID_VERIFICATION=false
+HYBRID_ENABLE_FOCUSED_RETRY=false
+MAX_FILE_SIZE_MB=10
+MAX_FILES_PER_BATCH=3
+MAX_PAGES_PER_DOCUMENT=10
+MAX_REQUEST_SIZE_MB=32
+MAX_IMAGE_PIXELS=12000000
+CONCURRENT_PROCESSING_BATCHES=1
+UPLOAD_REQUESTS_PER_MINUTE=6
+```
+
+On the frontend configure VITE_API_URL as the actual backend HTTPS origin (no path).
+Retain the Blueprint's VITE_DEPLOYMENT_MODE=staging. These are the only two allowed
+public build variables. Never add VITE_GEMINI_API_KEY or any backend credential.
+Render supplies PORT; the Docker image supplies TEMP_STORAGE_PATH. Leave APP_ENV_FILE
+unset in Render. Hosted key loading ignores dotenv files and accepts only backend
+process variables. GEMINI_API_1 through GEMINI_API_8 are supported backend-only
+alternatives, but one GEMINI_API_KEY is sufficient; key rotation does not add quota.
+
+Missing environment keys, DEMO_MODE=true in staging-real, missing Supabase/login,
+invalid HTTPS endpoints/CORS or production mode prevent startup. A private-bucket
+readiness failure also prevents healthy deployment. Invalid credentials, unavailable
+models, schema rejection, provider/network failure and quota exhaustion are detected
+when processing, not by making a startup Gemini request. They return sanitized batch
+errors without switching to MockExtractor.
 
 Future institutional JWT issuer/audience/JWKS identifiers, SSO applications, tenant
 policy configuration, audit settings and monitoring destinations will be named only
@@ -226,12 +284,12 @@ No paid resources are provisioned by this work.
 5. Inspect **Events/Logs** for build/startup, then confirm /ready through the approved
    runtime check. Configure the frontend origin/API origin and deploy the frontend
    from the same release revision. Verify its SPA refresh and authentication flow.
-6. Permit synthetic demonstration only. Real patient data remains prohibited until
+6. Permit synthetic or institutionally approved non-sensitive documents only. Clinical data remains prohibited until
    the institution signs off every clinical release gate.
 
 ## 8. Static evidence and focused release validation
 
-Offline static checks performed here: Python AST parsing of 47 application files,
+Earlier deployment-preparation static checks: Python AST parsing of 47 application files,
 YAML duplicate-key/structure/path checks, application TypeScript no-emit checking,
 Vite configuration TypeScript no-emit checking and Git whitespace checks. The first
 Vite type-check exposed config target/type issues; those were fixed and the check
@@ -255,11 +313,21 @@ These are a bounded future validation checklist, not another broad E2E campaign:
 
 - Python dependency installation/container build on Linux, non-root startup and
   PORT binding; frontend production build using its real staging origin.
-- Startup rejects production mode, non-synthetic staging, missing/partial credentials,
+- Startup rejects production mode, mismatched staging mode/DEMO_MODE, missing/partial credentials,
   public bucket, wildcard/non-HTTPS CORS and invalid configuration.
 - /live versus /ready behavior on unavailable storage; valid JSON and no secret errors.
 - An unauthenticated API/document request is denied; authenticated source retrieval
   and expired/invalid sign-in behavior work with exact-origin CORS.
+- In staging-real, /ready reports environment=staging-real, demo_mode=false and
+  extractor=GeminiExtractor; logs show EXTRACTOR_TYPE: GeminiExtractor. The UI displays
+  the restricted real-extraction notice. Storage readiness does not prove Gemini access.
+- Only after explicit live-call/deployment approval, process one new synthetic page.
+  Compare the source values, require exactly one commitment, verify unreviewed export
+  is blocked, save a correction and approve required fields, then confirm one Excel
+  data row with that correction. No existing batch is reprocessed.
+- If an API failure occurs, review shows the sanitized error_code/message and available
+  retry delay, including quota-stopped batches. Do not treat HTTP 202 as extraction
+  success or enable mock mode to make the real-extraction check pass.
 - Oversized declared/streamed requests/files, bad MIME, invalid/encrypted/over-page
   PDFs, large images, upload-rate and processing-capacity limits return clear failures.
 - On synthetic data only, a targeted saved correction/version-conflict/restart/export
@@ -268,9 +336,17 @@ These are a bounded future validation checklist, not another broad E2E campaign:
 - For future production only: JWT/MFA/roles/tenant-denial, audit atomicity, worker kill/
   retry/duplicate delivery and DB/object restore tests after approved implementation.
 
-No live Supabase test, runtime server, Docker build, frontend build or Gemini call is
-run as part of the current static-only task. Offline static checks do not prove any
-of these runtime properties.
+This staging-real revision adds focused offline checks for hosted configuration,
+environment-only key loading, actual GeminiExtractor/Supabase selection, authentication
+and terminal quota error visibility. Verification passed: 39 focused offline tests,
+then one additional Blueprint-to-Settings parsing test; both application/Vite TypeScript
+no-emit checks; offline Blueprint/AST structural validation; Git whitespace checks.
+The included earlier 21 offline Gemini tests cover SDK schema compatibility, safe
+failures and one commitment per page. There is one existing Pydantic deprecation warning.
+No live Supabase
+test, runtime server, Docker build, frontend production build or Gemini call is run
+in this task. Offline checks do not prove live credentials, quota, availability or
+extraction accuracy. The owner's earlier Supabase tests remain separate evidence.
 
 ## 9. Troubleshooting
 
@@ -326,8 +402,9 @@ image locking plus vulnerability review. P2: localization/accessibility, CSP ref
 and operator recovery usability. Full acceptance criteria are in the architecture guide.
 
 Approval is required for pushes, deployment/Blueprint Apply, paid resources, schema/
-RPC migrations, RLS changes, destructive data operations and enabling real Gemini or
-clinical data. No compliance certification or safe clinical use is implied by this MVP.
+RPC migrations, RLS changes, destructive data operations, live Gemini calls or clinical
+data. The staging-real implementation is authorized; no live call/deployment is
+authorized by this checkpoint. No compliance certification or clinical release is implied.
 
 ## Reference documentation
 

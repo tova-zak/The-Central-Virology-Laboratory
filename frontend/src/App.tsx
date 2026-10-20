@@ -112,6 +112,10 @@ function App() {
               </div>
 
               {health.demo_mode && <p role="status">DEMO MODE — synthetic extraction only. Upload synthetic documents only.</p>}
+              {health.environment === 'staging-real' && <p role="status">
+                RESTRICTED STAGING — real Gemini extraction. Only synthetic or institutionally approved
+                non-sensitive documents. Clinical data is prohibited.
+              </p>}
               {health.requires_auth && !authenticated ? (
                 <form onSubmit={signIn}>
                   <label>Username <input autoComplete="username" value={username}

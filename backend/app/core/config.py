@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     supabase_service_key: str = ""
     supabase_bucket_name: str = "virology-lab-uploads"
     # "cloud" remains a compatibility alias for the protected staging demo.
-    deployment_mode: Literal["local", "cloud", "staging", "production"] = "local"
+    deployment_mode: Literal["local", "cloud", "staging", "staging-real", "production"] = "local"
     api_username: str = ""
     api_password: str = ""
     max_request_size_mb: int = Field(default=210, ge=1, le=512)
@@ -73,7 +73,15 @@ class Settings(BaseSettings):
                 "durable processing, audit ledger and institutional approvals are required"
             )
         if self.is_cloud:
-            if not self.demo_mode:
+            if self.deployment_mode == "staging-real":
+                if self.demo_mode:
+                    raise ValueError("staging-real requires DEMO_MODE=false; mock extraction is prohibited")
+                key_names = ["GEMINI_API_KEY", *(f"GEMINI_API_{i}" for i in range(1, 9))]
+                if not any(os.environ.get(name, "").strip() for name in key_names):
+                    raise ValueError("staging-real requires Gemini credentials in backend environment variables")
+                if not self.gemini_model.strip():
+                    raise ValueError("staging-real requires GEMINI_MODEL")
+            elif not self.demo_mode:
                 raise ValueError("Staging requires DEMO_MODE synthetic extraction")
             if not (self.supabase_url and self.supabase_service_key):
                 raise ValueError("Cloud requires SUPABASE_URL and SUPABASE_SERVICE_KEY")

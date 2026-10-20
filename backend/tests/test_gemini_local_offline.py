@@ -230,3 +230,127 @@ def test_real_adapter_results_keep_one_commitment_per_page(monkeypatch):
         assert record.patient_id_number.raw_value == "SYNTHETIC-ID"
         assert record.central_numbers.raw_value == ["SYN-LAB"]
         assert record.commitment_number.review_state == ReviewState.needs_review
+
+
+@pytest.fixture
+def staging_real(monkeypatch):
+    from app.core.config import settings
+    for name, value in {
+        "deployment_mode": "staging-real", "demo_mode": False,
+        "supabase_url": "https://synthetic-staging.invalid",
+        "supabase_service_key": "offline-storage-sentinel",
+        "api_username": "offline-operator", "api_password": "offline-password-sentinel",
+        "cors_origins": ["https://synthetic-frontend.invalid"],
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    monkeypatch.setenv("GEMINI_API_8", "offline-provider-sentinel")
+    return settings
+
+
+def test_staging_real_accepts_only_explicit_nonmock_mode(staging_real, monkeypatch):
+    staging_real.validate_deployment()
+    monkeypatch.setattr(staging_real, "demo_mode", True)
+    with pytest.raises(ValueError, match="DEMO_MODE=false"):
+        staging_real.validate_deployment()
+
+
+def test_blueprint_settings_parse_as_restricted_real_staging(staging_real):
+    from pathlib import Path
+    import yaml
+    from app.core.config import Settings
+    blueprint = yaml.safe_load((Path(__file__).resolve().parents[2] / "render.yaml").read_text(encoding="utf-8"))
+    backend = next(service for service in blueprint["services"] if service["runtime"] == "docker")
+    values = {item["key"].lower(): item["value"] for item in backend["envVars"] if "value" in item}
+    parsed = Settings(_env_file=None, **values, supabase_url=staging_real.supabase_url,
+                      supabase_service_key=staging_real.supabase_service_key,
+                      api_username=staging_real.api_username, api_password=staging_real.api_password,
+                      cors_origins=staging_real.cors_origins)
+    parsed.validate_deployment()
+    assert parsed.deployment_mode == "staging-real" and parsed.demo_mode is False
+    assert parsed.max_file_size_mb == 10 and parsed.max_pages_per_document == 10
+
+
+@pytest.mark.parametrize("mode", ["staging", "cloud", "production"])
+def test_real_staging_does_not_unlock_other_hosted_modes(staging_real, monkeypatch, mode):
+    monkeypatch.setattr(staging_real, "deployment_mode", mode)
+    with pytest.raises(ValueError, match="PRODUCTION BLOCKED" if mode == "production" else "DEMO_MODE"):
+        staging_real.validate_deployment()
+
+
+@pytest.mark.parametrize("name,value", [
+    ("supabase_url", ""), ("supabase_service_key", ""),
+    ("api_username", ""), ("api_password", "short"),
+    ("supabase_url", "http://synthetic-staging.invalid"),
+    ("cors_origins", []), ("cors_origins", ["https://*.invalid"]),
+    ("cors_origins", ["http://synthetic-frontend.invalid"]),
+    ("gemini_model", ""),
+])
+def test_real_staging_retains_hosted_startup_guards(staging_real, monkeypatch, name, value):
+    monkeypatch.setattr(staging_real, name, value)
+    with pytest.raises(ValueError):
+        staging_real.validate_deployment()
+
+
+def test_real_staging_rejects_file_only_credentials(staging_real, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_8")
+    monkeypatch.setattr(staging_real, "gemini_api_key", "file-only-sentinel")
+    with pytest.raises(ValueError, match="backend environment variables"):
+        staging_real.validate_deployment()
+
+
+def test_hosted_key_manager_never_reads_dotenv(staging_real, monkeypatch):
+    def forbidden_file(*args, **kwargs):
+        raise AssertionError("Hosted Gemini keys must not come from dotenv files")
+    monkeypatch.setattr(keys, "dotenv_values", forbidden_file)
+    manager = keys.GeminiKeyManager()
+    assert manager.get_total_key_count() == 1
+    assert manager.get_next_key()[1] == "offline-provider-sentinel"
+
+
+def test_real_staging_selects_gemini_and_supabase_without_network(staging_real, monkeypatch):
+    from unittest.mock import Mock
+    from app.services.storage import storage_adapter
+    from app.services.processing.background import BackgroundProcessor
+    persistent_store = Mock()
+    factory = Mock(return_value=persistent_store)
+    monkeypatch.setattr(storage_adapter, "SupabaseStorageAdapter", factory)
+    monkeypatch.setattr(adapter.genai, "Client", Mock(side_effect=AssertionError("No live client permitted")))
+    processor = BackgroundProcessor()
+    assert processor._storage is persistent_store
+    factory.assert_called_once_with()
+    assert isinstance(processor._extractor, adapter.GeminiExtractor)
+    assert processor.extractor_name == "GeminiExtractor"
+    assert processor._extractor.client is None
+
+
+def test_real_staging_still_requires_authentication(staging_real):
+    from app.core.access import require_access
+    from fastapi import HTTPException
+    from fastapi.security import HTTPBasicCredentials
+    with pytest.raises(HTTPException) as caught:
+        require_access(None)
+    assert caught.value.status_code == 401
+    require_access(HTTPBasicCredentials(username=staging_real.api_username, password=staging_real.api_password))
+
+
+def test_quota_terminal_status_includes_persisted_errors(staging_real, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.services.storage import storage_adapter
+    monkeypatch.setattr(storage_adapter, "SupabaseStorageAdapter", Mock())
+    from app.api import process
+    job = SimpleNamespace(status=process.ProcessingStatus.QUOTA_EXHAUSTED, progress={})
+    processor = Mock()
+    processor.get_job_status.return_value = job
+    monkeypatch.setattr(process, "get_processor", lambda: processor)
+    store = Mock()
+    store.load_batch.return_value = {
+        "batch_id": "synthetic_batch", "status": "quota_exhausted",
+        "commitment_records": [], "test_records": [],
+        "errors": [{"error": "Gemini daily quota exhausted", "error_code": "daily_quota"}],
+    }
+    monkeypatch.setattr(process, "_storage", store)
+    result = asyncio.run(process.get_batch_status("synthetic_batch"))
+    assert result["status"] == "quota_exhausted"
+    assert result["errors"][0]["error_code"] == "daily_quota"

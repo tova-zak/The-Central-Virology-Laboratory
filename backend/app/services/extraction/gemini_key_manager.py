@@ -55,8 +55,11 @@ class GeminiKeyManager:
         """Load API keys from environment variables."""
         raw_keys = []
         seen_values = set()
-        from app.core.config import ENV_FILE_PATH
-        file_values = {name.upper(): value for name, value in dotenv_values(ENV_FILE_PATH).items()}
+        from app.core.config import ENV_FILE_PATH, settings
+        # Hosted credentials come exclusively from backend process environment variables.
+        file_values = {} if settings.is_cloud else {
+            name.upper(): value for name, value in dotenv_values(ENV_FILE_PATH).items()
+        }
         
         for env_var in self.KEY_ENV_VARS:
             # Same file as Settings; explicit process variables take precedence.

@@ -74,8 +74,8 @@ export const WorkflowScreen: React.FC = () => {
           setStage('review'); // Show errors in review
           setProcessingError('Processing failed. Check details below.');
         } else if (batchStatus.status === 'quota_exhausted') {
-          setStage('processing');
-          setProcessingError('Gemini quota exhausted. Wait for reset or use demo mode.');
+          setStage('review');
+          setProcessingError('Gemini quota exhausted. Check extraction errors and provider cooldown.');
         } else {
           // uploaded but not processed yet
           setStage('upload');
@@ -130,7 +130,8 @@ export const WorkflowScreen: React.FC = () => {
           clearInterval(interval);
           setPollingInterval(null);
           setProcessing(false);
-          setProcessingError('Gemini quota exhausted. Wait for reset or enable demo mode.');
+          setProcessingError('Gemini quota exhausted. Check extraction errors and provider cooldown.');
+          setStage('review');
         }
       } catch (err) {
         console.error('Polling error:', err);

@@ -1,4 +1,5 @@
-# STAGING ONLY: synthetic data and a dedicated staging Supabase project.
+# RESTRICTED STAGING: real Gemini; synthetic or approved non-sensitive documents only.
+# Dedicated staging Supabase project; clinical production remains blocked.
 # Applying a Blueprint can deploy immediately: explicit approval is still required.
 services:
   - type: web
@@ -14,9 +15,13 @@ services:
     autoDeployTrigger: "off"
     envVars:
       - key: DEPLOYMENT_MODE
-        value: staging
+        value: staging-real
       - key: DEMO_MODE
-        value: "true"
+        value: "false"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
       - key: HYBRID_ENGINE_ENABLED
         value: "false"
       - key: HYBRID_ENABLE_PREPROCESSING

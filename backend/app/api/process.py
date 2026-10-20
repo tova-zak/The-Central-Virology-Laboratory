@@ -119,7 +119,8 @@ async def get_batch_status(batch_id: str):
         }
         
         # If completed, also load saved results
-        if job.status in [ProcessingStatus.COMPLETED, ProcessingStatus.COMPLETED_WITH_ERRORS, ProcessingStatus.FAILED]:
+        if job.status in [ProcessingStatus.COMPLETED, ProcessingStatus.COMPLETED_WITH_ERRORS,
+                          ProcessingStatus.FAILED, ProcessingStatus.QUOTA_EXHAUSTED]:
             batch_data = _storage.load_batch(batch_id)
             if batch_data:
                 # Add record_status to each test_record

@@ -72,8 +72,15 @@ def main():
         if service["type"] != "keyvalue":
             assert service["autoDeployTrigger"] == "off"
     api = next(service for service in staging if service["runtime"] == "docker")
-    assert variables(api)["DEPLOYMENT_MODE"] == "staging"
-    assert variables(api)["DEMO_MODE"] == "true"
+    assert variables(api)["DEPLOYMENT_MODE"] == "staging-real"
+    assert variables(api)["DEMO_MODE"] == "false"
+    assert variables(api)["GEMINI_API_KEY"] is None
+    assert variables(api)["GEMINI_MODEL"] is None
+    assert variables(api)["HYBRID_ENGINE_ENABLED"] == "false"
+    assert {item["key"] for item in api["envVars"] if item.get("sync") is False} == {
+        "GEMINI_API_KEY", "GEMINI_MODEL", "SUPABASE_URL", "SUPABASE_SERVICE_KEY",
+        "SUPABASE_BUCKET_NAME", "API_USERNAME", "API_PASSWORD", "CORS_ORIGINS",
+    }
     assert api["healthCheckPath"] == "/ready" and api["plan"] == "free"
     queue = next(service for service in production if service["type"] == "keyvalue")
     assert queue["ipAllowList"] == [] and queue["maxmemoryPolicy"] == "noeviction"

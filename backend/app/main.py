@@ -1,4 +1,4 @@
-"""FastAPI entry point for local development and the protected synthetic cloud demo."""
+"""FastAPI entry point for local development and restricted non-clinical staging."""
 from contextlib import asynccontextmanager
 import logging
 import os
@@ -86,6 +86,7 @@ async def health_check():
     return JSONResponse({"status": "healthy" if healthy else "unhealthy", "checks": checks,
                          "service": settings.app_name, "version": settings.app_version,
                          "demo_mode": settings.demo_mode,
+                         "extractor": process.get_processor().extractor_name,
                          "model": "synthetic mock" if settings.demo_mode else "configured extractor",
                          "environment": settings.deployment_mode,
                          "requires_auth": settings.is_cloud or bool(settings.supabase_url or settings.api_password)},

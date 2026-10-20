@@ -584,6 +584,20 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
         </div>
       </div>
 
+      {!!batchData.errors?.length && (
+        <section className="error-box" role="alert" dir="ltr">
+          <h2>Extraction errors</h2>
+          <p>Extraction was incomplete. Failed pages require manual review. Review all required fields before export.</p>
+          <ul>{batchData.errors.map((failure, index) => (
+            <li key={index}>
+              {failure.error_code && <strong>{failure.error_code}: </strong>}{failure.error}
+              {failure.page_index !== undefined && <> (page {failure.page_index + 1})</>}
+              {failure.retry_after_seconds != null && <> — retry no earlier than {Math.ceil(failure.retry_after_seconds)} seconds after the failure.</>}
+            </li>
+          ))}</ul>
+        </section>
+      )}
+
       {/* Render based on view mode */}
       {batchData.commitment_records?.length > 0 && !batchData.test_records?.length ? (
         <section className="table-section">

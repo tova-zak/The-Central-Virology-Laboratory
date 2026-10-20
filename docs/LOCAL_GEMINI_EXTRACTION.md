@@ -107,8 +107,11 @@ normalized and reviewed patient fields, manual corrections, persistence and Exce
 mapping are preserved. Required missing/unreviewed fields still block export.
 Reprocessing existing records remains prohibited to protect human-reviewed values.
 
-Hosted staging still requires DEMO_MODE synthetic extraction and production remains
-blocked. render.yaml, production security gates, RLS and database schema were not changed.
+The subsequent restricted-staging revision introduces DEPLOYMENT_MODE=staging-real
+with DEMO_MODE=false; see DEPLOYMENT.md for Render instructions. Staging/cloud mock
+mode still requires DEMO_MODE=true. Hosted Gemini keys come exclusively from backend
+environment variables, never APP_ENV_FILE. Clinical production remains blocked;
+production security gates, RLS and database schema are unchanged.
 
 ## Verification
 

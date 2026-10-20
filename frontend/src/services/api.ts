@@ -116,6 +116,8 @@ export interface ProcessingError {
   document_id: string;
   page_index?: number;
   error: string;
+  error_code?: string;
+  retry_after_seconds?: number | null;
 }
 
 // API Response Types
@@ -126,6 +128,8 @@ export interface HealthResponse {
   version: string;
   model: string;
   demo_mode?: boolean;
+  environment?: string;
+  extractor?: string;
 }
 
 export interface DocumentInfo {
