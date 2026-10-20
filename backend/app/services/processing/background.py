@@ -728,7 +728,7 @@ class BackgroundProcessor:
         
         for attempt in range(self._max_retries + 1):
             try:
-                logger.info(f"[{document_id}] Calling Gemini (attempt {attempt + 1}/{self._max_retries + 1})")
+                logger.info(f"[{document_id}] {'MockExtractor' if settings.demo_mode else 'Gemini'} extraction (attempt {attempt + 1}/{self._max_retries + 1})")
                 
                 # Run extraction with timeout
                 extraction_result = await asyncio.wait_for(

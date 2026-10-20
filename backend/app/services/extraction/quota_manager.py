@@ -65,6 +65,11 @@ class QuotaManager:
             - is_available: True if can make API call
             - quota_status: QuotaStatus if blocked, None otherwise
         """
+        # Skip quota checks in DEMO_MODE (MockExtractor doesn't use API)
+        from app.core.config import settings
+        if settings.demo_mode:
+            return True, None  # Always available in demo mode
+        
         with self._lock:
             if model not in self._exhausted_quotas:
                 return True, None
