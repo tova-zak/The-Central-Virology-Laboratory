@@ -22,6 +22,8 @@ from app.services.extraction.quota_manager import get_quota_manager, parse_gemin
 # Pydantic model for structured output
 class CommitmentFormExtraction(BaseModel):
     """Structured extraction model for commitment forms."""
+    model_config = {"extra": "allow"}  # Allow extra properties for Gemini Developer API compatibility
+    
     patient_first_name: Optional[str] = Field(None, description="Patient's first name or None if missing/unclear")
     patient_last_name: Optional[str] = Field(None, description="Patient's last name or None if missing/unclear")
     patient_id_number: Optional[str] = Field(None, description="Patient ID number as string (preserves leading zeros) or None")
