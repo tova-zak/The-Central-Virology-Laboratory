@@ -1,0 +1,32 @@
+# Docker Compose for local testing with Render Free tier constraints
+# Purpose: Test resource limits (512 MB RAM, limited CPU) before deployment
+
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    image: virology-lab-backend:local
+    container_name: virology-backend-local
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-dummy_key_for_demo}
+      - DEMO_MODE=${DEMO_MODE:-true}
+      - HYBRID_ENGINE_ENABLED=true
+      - TEMP_STORAGE_PATH=/app/temp_storage
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+      - TESSERACT_CMD=/usr/bin/tesseract
+    # Render Free tier constraints
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5  # 0.1 may be too restrictive for Docker, use 0.5 for testing
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Note: No volumes for persistence - testing ephemeral storage behavior
+# Persistence will be handled by Supabase adapter in production

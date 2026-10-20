@@ -77,6 +77,12 @@ class FieldValue(BaseModel, Generic[T]):
         evidence_refs: Source locations in documents
         extractor_id: Which extractor was used
         extraction_attempt_id: Unique ID for this extraction attempt
+        
+        # Hybrid Engine extensions (Phase 2-4, backward compatible):
+        ocr_value: OCR-extracted value (verification only, never overwrites reviewed_value)
+        verification_status: Cross-verification result (verified/conflicting/gemini_only/etc)
+        preprocessing_method: Which preprocessing was used (original/deskewed/etc)
+        retry_count: Number of focused retry attempts (0 if none)
     """
     raw_value: Optional[T] = None
     normalized_value: Optional[T] = None
@@ -90,6 +96,12 @@ class FieldValue(BaseModel, Generic[T]):
     
     extractor_id: str = ""
     extraction_attempt_id: str = ""
+    
+    # Hybrid Engine extensions (optional, backward compatible)
+    ocr_value: Optional[T] = None  # OCR verification value
+    verification_status: Optional[str] = None  # "verified" | "conflicting" | "gemini_only" | etc
+    preprocessing_method: Optional[str] = None  # "original" | "deskewed" | "contrast_enhanced" | etc
+    retry_count: int = 0  # Number of focused retry attempts
 
 
 class TestRecord(BaseModel):
