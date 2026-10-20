@@ -1,0 +1,306 @@
+/**
+ * FormCard Styles - Tzalul Theme
+ * Professional card-based form display with RTL layout
+ */
+
+.form-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+  direction: rtl;
+  text-align: right;
+}
+
+.form-card:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--primary);
+}
+
+.form-card:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Header */
+.form-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.form-card-header h3 {
+  margin: 0;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.form-confidence {
+  font-size: var(--font-sm);
+  color: var(--text-tertiary);
+  padding: var(--space-1) var(--space-3);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+}
+
+/* Body */
+.form-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* Section Styles */
+.form-card-body section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.form-card-body section h4 {
+  margin: 0;
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Patient Info Grid */
+.patient-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-4);
+}
+
+.info-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: border-color var(--transition-fast);
+}
+
+.info-field.field-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+}
+
+.info-field.field-error {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+}
+
+.info-field .field-label {
+  font-size: var(--font-sm);
+  color: var(--text-tertiary);
+  font-weight: var(--weight-medium);
+}
+
+.info-field .field-value {
+  font-size: var(--font-base);
+  color: var(--text-primary);
+  font-weight: var(--weight-normal);
+}
+
+/* Samples List */
+.samples-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sample-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+}
+
+.sample-central {
+  font-size: var(--font-sm);
+  color: var(--text-primary);
+}
+
+.sample-central strong {
+  font-weight: var(--weight-semibold);
+  color: var(--primary);
+}
+
+.sample-date {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+/* Commitments List */
+.commitments-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.commitment-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  gap: var(--space-3);
+}
+
+.commitment-number {
+  font-size: var(--font-base);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  flex: 1;
+}
+
+/* Relationship Status Badge */
+.relationship-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.relationship-status.status-green {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+.relationship-status.status-orange {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.relationship-status.status-red {
+  background: var(--error-bg);
+  color: var(--error-text);
+  border: 1px solid var(--error-border);
+}
+
+/* Resolve Button */
+.resolve-btn {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: var(--font-family-primary);
+  white-space: nowrap;
+}
+
+.resolve-btn:hover {
+  background: var(--warning-text);
+  color: white;
+  box-shadow: var(--shadow-sm);
+}
+
+.resolve-btn:focus {
+  outline: 2px solid var(--warning-text);
+  outline-offset: 2px;
+}
+
+/* Empty Message */
+.empty-message {
+  text-align: center;
+  padding: var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--font-sm);
+  font-style: italic;
+  margin: 0;
+}
+
+/* Footer */
+.form-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-light);
+}
+
+.edit-form-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: var(--font-family-primary);
+}
+
+.edit-form-btn:hover {
+  background: var(--primary-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.edit-form-btn:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .form-card {
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
+  }
+
+  .patient-info-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
+
+  .form-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .commitment-item,
+  .sample-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .resolve-btn {
+    width: 100%;
+  }
+}
