@@ -111,6 +111,13 @@ async def get_batch_status(batch_id: str):
             if batch_data:
                 # Add record_status to each test_record
                 batch_data = _add_record_statuses(batch_data)
+                # Ensure forms and samples are included (NEW for MVP)
+                if "forms" not in batch_data:
+                    batch_data["forms"] = []
+                if "samples" not in batch_data:
+                    batch_data["samples"] = []
+                if "statistics" not in batch_data:
+                    batch_data["statistics"] = {}
                 response.update(batch_data)
         
         return response
@@ -121,6 +128,13 @@ async def get_batch_status(batch_id: str):
     if batch_data:
         # Add record_status to each test_record
         batch_data = _add_record_statuses(batch_data)
+        # Ensure forms and samples are included (NEW for MVP)
+        if "forms" not in batch_data:
+            batch_data["forms"] = []
+        if "samples" not in batch_data:
+            batch_data["samples"] = []
+        if "statistics" not in batch_data:
+            batch_data["statistics"] = {}
         return batch_data
     
     # Check if batch directory exists (uploaded but not processed)
@@ -439,8 +453,95 @@ def _validate_record(test_record: TestRecord):
             test_record.received_date.validation_issues.append(issue)
 
 
+def _merge_multi_page_extractions(
+    page0_result,  # ExtractionResult
+    page1_result,  # ExtractionResult
+    document_id: str,
+    page0_index: int,
+    page1_index: int
+):
+    """Merge extraction results from 2-page logical form.
+    
+    Strategy:
+    - Patient info: from page 0 (page 1 may be blank)
+    - Commitments: UNION from both pages, DEDUPLICATE by number
+    - Central numbers: UNION from both pages, DEDUPLICATE
+    - Commitment types: merge (for metadata)
+    - Warnings: concatenate all warnings
+    
+    Args:
+        page0_result: ExtractionResult from first page
+        page1_result: ExtractionResult from second page
+        document_id: Document identifier
+        page0_index: Zero-indexed page number of first page
+        page1_index: Zero-indexed page number of second page
+    
+    Returns:
+        tuple: (merged_test_record, merged_extraction_result)
+    """
+    from app.services.extraction.extractor import ExtractionResult
+    
+    # Merge fields
+    merged_fields = {}
+    
+    # Patient info: prefer page 0, fallback to page 1 if page 0 missing
+    for field in ['patient_first_name', 'patient_last_name', 'patient_id_number', 'sender', 'received_date']:
+        val0 = page0_result.fields.get(field)
+        val1 = page1_result.fields.get(field)
+        merged_fields[field] = val0 if val0 else val1
+    
+    # Central numbers: UNION + deduplicate
+    central0 = set(page0_result.fields.get('central_numbers', []))
+    central1 = set(page1_result.fields.get('central_numbers', []))
+    merged_fields['central_numbers'] = sorted(central0 | central1)
+    
+    # Commitment numbers: UNION + deduplicate
+    comm0 = set(page0_result.fields.get('commitment_numbers', []))
+    comm1 = set(page1_result.fields.get('commitment_numbers', []))
+    merged_fields['commitment_numbers'] = sorted(comm0 | comm1)
+    
+    # Commitment types: merge (for metadata)
+    types0 = page0_result.fields.get('commitment_types', [])
+    types1 = page1_result.fields.get('commitment_types', [])
+    seen_numbers = set()
+    merged_types = []
+    for item in types0 + types1:
+        if item['number'] not in seen_numbers:
+            merged_types.append(item)
+            seen_numbers.add(item['number'])
+    merged_fields['commitment_types'] = merged_types
+    
+    # Warnings: concatenate
+    warnings0 = page0_result.warnings or []
+    warnings1 = page1_result.warnings or []
+    merged_warnings = warnings0 + [f"(page {page1_index+1}) {w}" for w in warnings1]
+    
+    # Create merged ExtractionResult
+    merged_extraction = ExtractionResult(
+        schema_version=page0_result.schema_version,
+        fields=merged_fields,
+        warnings=merged_warnings,
+        model_id=page0_result.model_id,
+        prompt_version=page0_result.prompt_version,
+        processing_time_ms=page0_result.processing_time_ms + page1_result.processing_time_ms,
+        raw_response=f"MERGED: page {page0_index} + page {page1_index}"
+    )
+    
+    # Create TestRecord
+    test_record = _map_extraction_to_test_record(merged_extraction, document_id, page0_index)
+    test_record.page_indices = [page0_index, page1_index]  # Mark as multi-page
+    
+    return test_record, merged_extraction
+
+
 def _create_commitment_records(test_record: TestRecord, extraction_result) -> list[CommitmentRecord]:
-    """Create CommitmentRecords from extraction result."""
+    """Create CommitmentRecords from extraction result.
+    
+    NOTE: relation_status="ambiguous" is conservative default.
+    Agent A (segmentation) will enhance this with explicit relationship mapping
+    between commitments and samples based on form structure and visual cues.
+    For now, central_number_refs includes ALL central numbers from the form.
+    """
     commitment_numbers = extraction_result.fields.get("commitment_numbers", [])
     
     records = []
@@ -495,6 +596,21 @@ async def export_batch(batch_id: str):
     # Reconstruct TestRecord and CommitmentRecord objects from dicts
     test_records = [TestRecord(**r) for r in batch_data["test_records"]]
     commitment_records = [CommitmentRecord(**c) for c in batch_data["commitment_records"]]
+    
+    # NEW: Check for unresolved commitment-sample relationships (D2 requirement)
+    unresolved_commitments = [
+        c for c in commitment_records 
+        if c.relationship_status == "unresolved_relationship"
+    ]
+    
+    if unresolved_commitments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": f"Export blocked: {len(unresolved_commitments)} commitments have unresolved sample relationships. Manual review required.",
+                "unresolved_commitment_ids": [c.commitment_record_id for c in unresolved_commitments]
+            }
+        )
     
     # Check for problematic fields (comprehensive blocking per D-07)
     problematic_records = []

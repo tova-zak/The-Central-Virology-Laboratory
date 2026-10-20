@@ -135,23 +135,65 @@ class TestRecord(BaseModel):
     page_indices: list[int] = Field(default_factory=list)  # Which pages contain this test
 
 
-class CommitmentRecord(BaseModel):
-    """Commitment record linked to a test.
+class LogicalForm(BaseModel):
+    """Logical form entity representing a multi-page form.
     
-    Represents the N:M relationship between tests and commitments.
-    One test may have multiple commitments, one commitment may reference multiple central numbers.
+    A LogicalForm groups one or more pages that belong to the same logical document.
+    For example, a 2-page form with "עמוד 1/2" and "עמוד 2/2" becomes one LogicalForm.
+    """
+    form_id: str  # Unique identifier
+    document_id: str  # Which PDF/document this form came from
+    page_indices: list[int] = Field(default_factory=list)  # 0-based page numbers, e.g. [0, 1]
+    
+    # Segmentation metadata
+    segmentation_confidence: float = 0.0  # 0.0-1.0
+    segmentation_method: str = "single_page"  # "page_notation" | "heuristic" | "single_page"
+    
+    # Patient/form fields (inherited from TestRecord pattern)
+    patient_first_name: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    patient_last_name: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    patient_id_number: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    sender: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    
+    # References to samples and commitments
+    sample_ids: list[str] = Field(default_factory=list)
+    commitment_ids: list[str] = Field(default_factory=list)
+
+
+class Sample(BaseModel):
+    """Sample entity representing a (central_number, received_date) pair.
+    
+    A Sample links a central number sticker to a received date from a form.
+    Multiple samples may exist per form.
+    """
+    sample_id: str  # Unique identifier
+    form_id: str  # Which LogicalForm this sample came from
+    
+    # Sample fields
+    central_number: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+    received_date: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
+
+
+class CommitmentRecord(BaseModel):
+    """Commitment record linked to a form.
+    
+    Represents the N:M relationship between forms and commitments.
+    One form may have multiple commitments, one commitment may reference multiple samples.
     """
     commitment_record_id: str  # Unique identifier
-    test_id: str  # Reference to TestRecord
+    test_id: str = ""  # Reference to TestRecord (DEPRECATED, keep for backward compat)
+    form_id: str = ""  # Reference to LogicalForm (NEW)
     
     # Commitment number
     commitment_number: FieldValue[str] = Field(default_factory=lambda: FieldValue[str]())
     
-    # Which central numbers does this commitment relate to?
-    central_number_refs: list[str] = Field(default_factory=list)
+    # Which samples (central numbers) does this commitment relate to?
+    central_number_refs: list[str] = Field(default_factory=list)  # DEPRECATED
+    sample_ids: list[str] = Field(default_factory=list)  # NEW: explicit sample links
     
     # Relationship clarity
-    relation_status: str = "unknown"  # "related" | "ambiguous" | "unknown"
+    relation_status: str = "unknown"  # "related" | "ambiguous" | "unknown" (DEPRECATED, read-only)
+    relationship_status: str = "unresolved_relationship"  # NEW: "explicit" | "inferred" | "unresolved_relationship" | "none"
     
     # Review status for this commitment
     review_status: ReviewState = ReviewState.pending

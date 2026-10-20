@@ -18,7 +18,7 @@ from app.services.extraction.gemini_adapter import GeminiExtractor
 from app.services.extraction.quota_manager import get_quota_manager, parse_gemini_error
 from app.services.validation import validator
 from app.services.storage import JSONStorage
-from app.domain.models import TestRecord, FieldValue, ExtractionState, ReviewState
+from app.domain.models import TestRecord, FieldValue, ExtractionState, ReviewState, LogicalForm, Sample, CommitmentRecord
 
 
 # Configure logging
@@ -246,6 +246,8 @@ class BackgroundProcessor:
             
             test_records = []
             commitment_records = []
+            forms = []  # NEW: Track LogicalForms
+            samples = []  # NEW: Track Samples
             errors = []
             
             # Process each file
@@ -269,144 +271,97 @@ class BackgroundProcessor:
                     render_time = time.time() - render_start
                     logger.info(f"[{batch_id}][{document_id}] Rendered {len(images)} pages in {render_time:.2f}s")
                     
-                    # Step 2: Process each page
-                    for page_index, image_bytes in enumerate(images):
-                        logger.info(f"[{batch_id}][{document_id}] Processing page {page_index + 1}/{len(images)}")
+                    # ========== FORM-BASED PROCESSING (NEW MVP APPROACH) ==========
+                    # Step 2: Segment pages into logical forms
+                    from app.services.segmentation.segmenter import segment_pages_into_forms
+                    
+                    logger.info(f"[{batch_id}][{document_id}] Segmenting {len(images)} pages into logical forms")
+                    segment_start = time.time()
+                    
+                    # Get OCR extractor for segmentation (reuse from hybrid pipeline if enabled)
+                    ocr_for_segmentation = self._get_ocr_extractor() if self._hybrid_config.enable_ocr else None
+                    forms = segment_pages_into_forms(images, document_id, ocr_for_segmentation)
+                    
+                    segment_time = time.time() - segment_start
+                    logger.info(f"[{batch_id}][{document_id}] Segmented into {len(forms)} forms in {segment_time:.2f}s")
+                    
+                    # Step 3: Process each form (instead of each page)
+                    for form_index, form in enumerate(forms):
+                        logger.info(f"[{batch_id}][{document_id}] Processing form {form_index + 1}/{len(forms)} with pages {form.page_indices}")
                         
                         try:
-                            # ========== HYBRID EXTRACTION PIPELINE ==========
-                            
-                            # Phase 1: Image Preprocessing (if enabled)
-                            preprocessed_variants = []
-                            original_bytes = image_bytes
-                            
-                            if self._hybrid_config.enable_preprocessing:
-                                preprocessor = self._get_preprocessor()
-                                if preprocessor:
-                                    logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Preprocessing image")
-                                    preprocessed_variants = preprocessor.preprocess(image_bytes)
-                                    logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Generated {len(preprocessed_variants)} preprocessed variants")
-                                    
-                                    # Use best preprocessed variant for extraction
-                                    if preprocessed_variants:
-                                        image_bytes = preprocessed_variants[0][0]  # (bytes, method)
-                            
-                            # Phase 2: Primary Extraction (Gemini or Mock)
-                            logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Extracting with {self._extractor.model}")
-                            extraction_result = await self._extract_with_retry(
-                                image_bytes=image_bytes,
-                                document_id=document_id,
-                                page_index=page_index
+                            # Extract fields from all pages of the form
+                            form_extracted = await self._extract_from_form(
+                                form=form,
+                                images=images,
+                                batch_id=batch_id,
+                                document_id=document_id
                             )
                             
-                            # Phase 3: OCR Verification (if enabled)
-                            # NOTE: OCR runs even in DEMO_MODE if HYBRID_ENABLE_OCR=true
-                            # This allows testing local OCR without Gemini API calls
-                            ocr_result = None
-                            if self._hybrid_config.enable_ocr:
-                                ocr_extractor = self._get_ocr_extractor()
-                                if ocr_extractor:
-                                    if settings.demo_mode:
-                                        logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Running OCR in DEMO MODE (Tesseract real, Gemini mocked)")
-                                    else:
-                                        logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Running OCR verification (LIVE MODE)")
-                                    
-                                    try:
-                                        ocr_result = await asyncio.to_thread(
-                                            ocr_extractor.extract,
-                                            image=original_bytes,  # Always use original for OCR
-                                            document_id=document_id,
-                                            page_index=page_index
-                                        )
-                                        logger.info(f"[{batch_id}][{document_id}] Page {page_index}: OCR completed in {ocr_result.processing_time_ms:.0f}ms")
-                                    except Exception as ocr_error:
-                                        logger.warning(f"[{batch_id}][{document_id}] Page {page_index}: OCR failed: {ocr_error}")
-                                        ocr_result = None
+                            # Create Samples from the form (central_number + received_date pairs)
+                            form_samples = self._create_samples_from_form(form_extracted)
                             
-                            # Phase 4: Map to TestRecord
-                            from app.api.process import _map_extraction_to_test_record, _detect_uncertainty, _validate_record, _create_commitment_records
+                            # Create CommitmentRecords linked to this form
+                            from app.api.process import _create_commitment_records
                             
-                            test_record = _map_extraction_to_test_record(
-                                extraction_result=extraction_result,
+                            # We need to create a temporary TestRecord for backward compatibility
+                            # with _create_commitment_records which expects TestRecord
+                            # TODO: Refactor _create_commitment_records to work with LogicalForm
+                            temp_test_record = TestRecord(
+                                test_id=form_extracted.form_id,
+                                patient_first_name=form_extracted.patient_first_name,
+                                patient_last_name=form_extracted.patient_last_name,
+                                patient_id_number=form_extracted.patient_id_number,
+                                sender=form_extracted.sender,
+                                received_date=form_samples[0].received_date if form_samples else FieldValue[str](),
+                                central_numbers=FieldValue[list[str]](
+                                    raw_value=[s.central_number.raw_value for s in form_samples if s.central_number.raw_value],
+                                    extraction_state=ExtractionState.found if form_samples else ExtractionState.missing
+                                ),
+                                commitment_ids=[],
                                 document_id=document_id,
-                                page_index=page_index
+                                page_indices=form_extracted.page_indices
                             )
                             
-                            # Phase 5: Hybrid Verification (if enabled)
-                            # NOTE: Verification runs in DEMO_MODE if OCR result exists
-                            # This allows testing verification logic with mocked Gemini + real OCR
-                            if self._hybrid_config.enable_hybrid_verification and ocr_result:
-                                verifier = self._get_hybrid_verifier()
-                                if verifier:
-                                    if settings.demo_mode:
-                                        logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Running hybrid verification (DEMO: Mock Gemini vs Real OCR)")
-                                    else:
-                                        logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Running hybrid verification (LIVE: Real Gemini vs Real OCR)")
-                                    
-                                    # Verify individual fields (not commitment_numbers which is a list)
-                                    field_names = [
-                                        "patient_first_name",
-                                        "patient_last_name", 
-                                        "patient_id_number",
-                                        "sender",
-                                        "received_date"
-                                    ]
-                                    
-                                    for field_name in field_names:
-                                        field_value = getattr(test_record, field_name, None)
-                                        if field_value is None:
-                                            continue
-                                        
-                                        gemini_value = field_value.raw_value if field_value else None
-                                        ocr_value = ocr_result.fields.get(field_name)
-                                        
-                                        # Run verification
-                                        verification = verifier.verify_field(
-                                            field_name=field_name,
-                                            gemini_result=extraction_result,
-                                            ocr_result=ocr_result,
-                                            current_field_value=field_value
-                                        )
-                                        
-                                        # Apply verification results to field
-                                        if field_value:
-                                            verifier.apply_verification_to_field(
-                                                field_value=field_value,
-                                                evidence=verification,
-                                                field_name=field_name
-                                            )
-                                    
-                                    logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Verification complete")
+                            # Extract commitment numbers from extraction_result (if available)
+                            # Note: We need to pass the extraction_result, but we're doing per-form now
+                            # For MVP, we'll extract commitments from the first page's extraction
+                            # TODO: Aggregate commitments from all pages in multi-page forms
+                            commitments = []  # Will be populated below
                             
-                            # Phase 6: Detect uncertainty and validate
-                            _detect_uncertainty(test_record, extraction_result)
-                            _validate_record(test_record)
+                            # Create commitments and link to samples
+                            form_commitments = self._create_commitments_for_form(
+                                form=form_extracted,
+                                samples=form_samples,
+                                temp_test_record=temp_test_record
+                            )
                             
-                            # Phase 7: Create CommitmentRecords
-                            commitments = _create_commitment_records(test_record, extraction_result)
+                            commitments.extend(form_commitments)
                             
-                            test_records.append(test_record)
+                            # Store form, samples, and commitments
+                            forms.append(form_extracted)  # NEW: Store the form
+                            samples.extend(form_samples)  # NEW: Store samples
+                            test_records.append(temp_test_record)  # Keep for backward compat
                             commitment_records.extend(commitments)
                             
-                            logger.info(f"[{batch_id}][{document_id}] Page {page_index + 1} processed successfully")
+                            logger.info(f"[{batch_id}][{document_id}] Form {form_index + 1} processed: {len(form_samples)} samples, {len(commitments)} commitments")
                             
                         except asyncio.TimeoutError:
                             error_msg = f"Gemini timeout after {self._gemini_timeout_seconds}s"
-                            logger.error(f"[{batch_id}][{document_id}] Page {page_index}: {error_msg}")
+                            logger.error(f"[{batch_id}][{document_id}] Form {form_index}: {error_msg}")
                             errors.append({
                                 "document_id": document_id,
-                                "page_index": page_index,
+                                "form_id": form.form_id,
+                                "pages": form.page_indices,
                                 "error": error_msg
                             })
                         
                         except Exception as e:
                             # Check if quota exhausted
                             if "quota exhausted" in str(e).lower() or "quota_exhausted" in job.status.value:
-                                # Stop processing remaining pages
                                 logger.error(f"[{batch_id}][{document_id}] Quota exhausted, stopping batch")
                                 job.status = ProcessingStatus.QUOTA_EXHAUSTED
                                 
-                                # Get quota info
                                 quota_manager = get_quota_manager()
                                 exhausted_quotas = quota_manager.get_all_exhausted_quotas()
                                 
@@ -419,14 +374,14 @@ class BackgroundProcessor:
                                 else:
                                     job.error = "מכסת Gemini החינמית הסתיימה."
                                 
-                                # Break out of page loop - don't process more pages
                                 break
                             
                             error_msg = str(e)
-                            logger.error(f"[{batch_id}][{document_id}] Page {page_index} failed: {error_msg}")
+                            logger.error(f"[{batch_id}][{document_id}] Form {form_index} failed: {error_msg}")
                             errors.append({
                                 "document_id": document_id,
-                                "page_index": page_index,
+                                "form_id": form.form_id,
+                                "pages": form.page_indices,
                                 "error": error_msg
                             })
                     
@@ -459,6 +414,14 @@ class BackgroundProcessor:
                 "status": job.status.value,
                 "test_records": [r.model_dump() for r in test_records],
                 "commitment_records": [c.model_dump() for c in commitment_records],
+                "forms": [f.model_dump() for f in forms],  # NEW
+                "samples": [s.model_dump() for s in samples],  # NEW
+                "statistics": {
+                    "total_pages": sum(len(r.page_indices) if r.page_indices else 1 for r in test_records),
+                    "total_forms": len(forms),  # NEW: actual form count from segmentation
+                    "total_commitments": len(commitment_records),
+                    "unresolved_relationships": sum(1 for c in commitment_records if c.relationship_status == "unresolved_relationship")
+                },
                 "errors": errors,
                 "processed_count": len(test_records),
                 "error_count": len(errors)
@@ -495,6 +458,235 @@ class BackgroundProcessor:
                 "error_count": 1
             }
             self._storage.save_batch(batch_id, error_result)
+    
+    async def _extract_from_form(
+        self,
+        form: LogicalForm,
+        images: list[bytes],
+        batch_id: str,
+        document_id: str
+    ) -> LogicalForm:
+        """Extract fields from all pages of a form.
+        
+        For multi-page forms, extracts from each page and merges results.
+        Patient info prioritized from first page, commitment numbers aggregated from all pages.
+        
+        Args:
+            form: LogicalForm entity with page_indices
+            images: List of all page images for this document
+            batch_id: Batch ID for logging
+            document_id: Document ID for logging
+            
+        Returns:
+            LogicalForm with populated fields
+        """
+        from app.api.process import _map_extraction_to_test_record, _detect_uncertainty, _validate_record
+        
+        # Extract from each page of the form
+        page_extractions = []
+        
+        for page_index in form.page_indices:
+            if page_index >= len(images):
+                logger.warning(f"[{batch_id}][{document_id}] Page index {page_index} out of range, skipping")
+                continue
+            
+            image_bytes = images[page_index]
+            logger.info(f"[{batch_id}][{document_id}] Extracting from form page {page_index}")
+            
+            # Apply preprocessing if enabled (reuse from existing pipeline)
+            if self._hybrid_config.enable_preprocessing:
+                preprocessor = self._get_preprocessor()
+                if preprocessor:
+                    preprocessed_variants = preprocessor.preprocess(image_bytes)
+                    if preprocessed_variants:
+                        image_bytes = preprocessed_variants[0][0]
+            
+            # Extract with Gemini/Mock
+            extraction_result = await self._extract_with_retry(
+                image_bytes=image_bytes,
+                document_id=document_id,
+                page_index=page_index
+            )
+            
+            page_extractions.append((page_index, extraction_result))
+        
+        # Merge extractions: prioritize first page for patient info, aggregate others
+        if not page_extractions:
+            logger.warning(f"[{batch_id}][{document_id}] No successful extractions for form {form.form_id}")
+            return form
+        
+        # Use first page for patient identification fields
+        first_page_idx, first_extraction = page_extractions[0]
+        first_test_record = _map_extraction_to_test_record(
+            extraction_result=first_extraction,
+            document_id=document_id,
+            page_index=first_page_idx
+        )
+        
+        # Copy patient fields to form
+        form.patient_first_name = first_test_record.patient_first_name
+        form.patient_last_name = first_test_record.patient_last_name
+        form.patient_id_number = first_test_record.patient_id_number
+        form.sender = first_test_record.sender
+        
+        # Aggregate central numbers and commitment numbers from all pages
+        all_central_numbers = []
+        all_commitment_numbers = []
+        all_received_dates = []
+        
+        for page_idx, extraction in page_extractions:
+            # Get central numbers from extraction
+            if hasattr(extraction, 'fields') and 'central_numbers' in extraction.fields:
+                central_nums = extraction.fields['central_numbers']
+                if isinstance(central_nums, list):
+                    all_central_numbers.extend(central_nums)
+                elif central_nums:
+                    all_central_numbers.append(central_nums)
+            
+            # Get commitment numbers
+            if hasattr(extraction, 'fields') and 'commitment_numbers' in extraction.fields:
+                commitment_nums = extraction.fields['commitment_numbers']
+                if isinstance(commitment_nums, list):
+                    all_commitment_numbers.extend(commitment_nums)
+                elif commitment_nums:
+                    all_commitment_numbers.append(commitment_nums)
+            
+            # Get received dates
+            if hasattr(extraction, 'fields') and 'received_date' in extraction.fields:
+                received_date = extraction.fields['received_date']
+                if received_date:
+                    all_received_dates.append(received_date)
+        
+        # Store aggregated data in form for later sample/commitment creation
+        form._extracted_central_numbers = all_central_numbers
+        form._extracted_commitment_numbers = all_commitment_numbers
+        form._extracted_received_dates = all_received_dates
+        form._page_extractions = page_extractions  # Store for commitment creation
+        
+        logger.info(
+            f"[{batch_id}][{document_id}] Form {form.form_id} extraction complete: "
+            f"{len(all_central_numbers)} central numbers, {len(all_commitment_numbers)} commitments"
+        )
+        
+        return form
+    
+    def _create_samples_from_form(self, form: LogicalForm) -> list[Sample]:
+        """Create Sample entities from a form's central numbers and received dates.
+        
+        Args:
+            form: LogicalForm with extracted data
+            
+        Returns:
+            List of Sample entities
+        """
+        import uuid
+        
+        samples = []
+        central_numbers = getattr(form, '_extracted_central_numbers', [])
+        received_dates = getattr(form, '_extracted_received_dates', [])
+        
+        # Simple heuristic: pair central numbers with received dates
+        # If one received date, use for all samples
+        # If multiple, pair in order
+        
+        if not central_numbers:
+            logger.warning(f"Form {form.form_id}: No central numbers found, no samples created")
+            return samples
+        
+        received_date_value = received_dates[0] if received_dates else None
+        
+        for idx, central_num in enumerate(central_numbers):
+            # Use corresponding received date or fall back to first one
+            date_value = received_dates[idx] if idx < len(received_dates) else received_date_value
+            
+            sample_id = f"{form.form_id}_sample_{uuid.uuid4().hex[:8]}"
+            
+            sample = Sample(
+                sample_id=sample_id,
+                form_id=form.form_id,
+                central_number=FieldValue[str](
+                    raw_value=central_num,
+                    extraction_state=ExtractionState.found
+                ),
+                received_date=FieldValue[str](
+                    raw_value=date_value,
+                    extraction_state=ExtractionState.found if date_value else ExtractionState.missing
+                )
+            )
+            
+            samples.append(sample)
+            form.sample_ids.append(sample_id)
+        
+        logger.info(f"Form {form.form_id}: Created {len(samples)} samples")
+        return samples
+    
+    def _create_commitments_for_form(
+        self,
+        form: LogicalForm,
+        samples: list[Sample],
+        temp_test_record: TestRecord
+    ) -> list[CommitmentRecord]:
+        """Create CommitmentRecord entities for a form and link to samples.
+        
+        Args:
+            form: LogicalForm with extracted data
+            samples: List of Sample entities for this form
+            temp_test_record: Temporary TestRecord for backward compatibility
+            
+        Returns:
+            List of CommitmentRecord entities
+        """
+        import uuid
+        
+        commitment_numbers = getattr(form, '_extracted_commitment_numbers', [])
+        commitments = []
+        
+        if not commitment_numbers:
+            logger.info(f"Form {form.form_id}: No commitment numbers found")
+            return commitments
+        
+        # Create one CommitmentRecord per commitment number
+        for commitment_num in commitment_numbers:
+            commitment_id = f"{form.form_id}_commitment_{uuid.uuid4().hex[:8]}"
+            
+            # Link commitment to samples based on heuristic
+            # Simple rule for MVP: if only 1 sample, link to it (status='inferred')
+            # If multiple samples, mark as 'unresolved_relationship' and require manual review
+            linked_sample_ids = []
+            relationship_status = "unresolved_relationship"
+            
+            if len(samples) == 1:
+                linked_sample_ids = [samples[0].sample_id]
+                relationship_status = "inferred"
+                logger.info(f"Commitment {commitment_num}: Linked to single sample {samples[0].sample_id} (inferred)")
+            elif len(samples) > 1:
+                # Multiple samples - cannot determine which commitment goes with which sample
+                relationship_status = "unresolved_relationship"
+                logger.warning(f"Commitment {commitment_num}: Multiple samples, relationship unresolved")
+            else:
+                # No samples - still create commitment but mark as no relationship
+                relationship_status = "none"
+                logger.warning(f"Commitment {commitment_num}: No samples, relationship=none")
+            
+            commitment = CommitmentRecord(
+                commitment_record_id=commitment_id,
+                test_id=temp_test_record.test_id,  # Backward compat
+                form_id=form.form_id,
+                commitment_number=FieldValue[str](
+                    raw_value=commitment_num,
+                    extraction_state=ExtractionState.found
+                ),
+                sample_ids=linked_sample_ids,
+                relationship_status=relationship_status,
+                review_status=ReviewState.needs_review if relationship_status == "unresolved_relationship" else ReviewState.pending
+            )
+            
+            commitments.append(commitment)
+            form.commitment_ids.append(commitment_id)
+            temp_test_record.commitment_ids.append(commitment_id)
+        
+        logger.info(f"Form {form.form_id}: Created {len(commitments)} commitments")
+        return commitments
     
     async def _extract_with_retry(self, image_bytes: bytes, document_id: str, page_index: int):
         """Extract with timeout and retry logic.
