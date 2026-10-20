@@ -1,6 +1,6 @@
 /**
- * FormCard Styles - Tzalul Theme
- * Professional card-based form display with RTL layout
+ * FormCard Styles - Professional RTL Form Display
+ * Agent B - MVP 8-hour implementation
  */
 
 .form-card {
@@ -8,69 +8,92 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--space-6);
-  margin-bottom: var(--space-6);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+  transition: box-shadow var(--transition-fast);
   direction: rtl;
   text-align: right;
 }
 
 .form-card:hover {
   box-shadow: var(--shadow-md);
-  border-color: var(--primary);
-}
-
-.form-card:focus-within {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
 }
 
 /* Header */
 .form-card-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: var(--space-6);
   padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--border-light);
 }
 
-.form-card-header h3 {
+.form-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+}
+
+.form-title h3 {
   margin: 0;
   font-size: var(--font-lg);
   font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
 
-.form-confidence {
-  font-size: var(--font-sm);
-  color: var(--text-tertiary);
-  padding: var(--space-1) var(--space-3);
+.segmentation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
-/* Body */
-.form-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
+.form-edit-btn {
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  transition: all var(--transition-fast);
+  font-family: var(--font-family-primary);
+  white-space: nowrap;
 }
 
-/* Section Styles */
-.form-card-body section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+.form-edit-btn:hover {
+  background: var(--selected-bg);
+  border-color: var(--primary-hover);
+  color: var(--primary-hover);
 }
 
-.form-card-body section h4 {
-  margin: 0;
+.form-edit-btn:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Sections */
+.form-section {
+  margin-bottom: var(--space-6);
+}
+
+.form-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.section-title {
+  margin: 0 0 var(--space-3) 0;
   font-size: var(--font-base);
   font-weight: var(--weight-semibold);
   color: var(--text-secondary);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border-light);
 }
 
 /* Patient Info Grid */
@@ -84,26 +107,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: var(--space-3);
-  background: var(--bg);
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  transition: border-color var(--transition-fast);
 }
 
-.info-field.field-warning {
-  background: var(--warning-bg);
-  border-color: var(--warning-border);
-}
-
-.info-field.field-error {
-  background: var(--error-bg);
-  border-color: var(--error-border);
-}
-
-.info-field .field-label {
+.info-field label {
   font-size: var(--font-sm);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-weight: var(--weight-medium);
 }
 
@@ -111,6 +119,38 @@
   font-size: var(--font-base);
   color: var(--text-primary);
   font-weight: var(--weight-normal);
+}
+
+.info-field .field-icon {
+  margin-right: var(--space-1);
+  font-size: var(--font-sm);
+}
+
+/* Field state colors */
+.info-field.green .field-value {
+  color: var(--success-text);
+}
+
+.info-field.orange {
+  background: var(--warning-bg);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--warning-border);
+}
+
+.info-field.orange .field-value {
+  color: var(--warning-text);
+}
+
+.info-field.red {
+  background: var(--error-bg);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--error-border);
+}
+
+.info-field.red .field-value {
+  color: var(--error-text);
 }
 
 /* Samples List */
@@ -125,26 +165,24 @@
 
 .sample-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--bg);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
+  font-size: var(--font-sm);
 }
 
-.sample-central {
-  font-size: var(--font-sm);
+.sample-central-number {
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
 
-.sample-central strong {
-  font-weight: var(--weight-semibold);
-  color: var(--primary);
+.sample-separator {
+  color: var(--text-tertiary);
 }
 
-.sample-date {
-  font-size: var(--font-sm);
+.sample-received-date {
   color: var(--text-secondary);
 }
 
@@ -160,19 +198,16 @@
 
 .commitment-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background: var(--bg);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
-  gap: var(--space-3);
 }
 
 .commitment-number {
-  font-size: var(--font-base);
-  color: var(--text-primary);
   font-weight: var(--weight-semibold);
+  color: var(--text-primary);
   flex: 1;
 }
 
@@ -206,101 +241,90 @@
   border: 1px solid var(--error-border);
 }
 
+.status-label {
+  margin-right: var(--space-1);
+}
+
 /* Resolve Button */
 .resolve-btn {
-  background: var(--warning-bg);
-  color: var(--warning-text);
-  border: 1px solid var(--warning-border);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  background: var(--primary);
+  color: white;
+  border: none;
   border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
   cursor: pointer;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
   transition: all var(--transition-fast);
   font-family: var(--font-family-primary);
   white-space: nowrap;
 }
 
 .resolve-btn:hover {
-  background: var(--warning-text);
-  color: white;
+  background: var(--primary-hover);
   box-shadow: var(--shadow-sm);
 }
 
 .resolve-btn:focus {
-  outline: 2px solid var(--warning-text);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
-/* Empty Message */
+/* Empty State */
 .empty-message {
-  text-align: center;
-  padding: var(--space-4);
-  color: var(--text-tertiary);
   font-size: var(--font-sm);
+  color: var(--text-tertiary);
   font-style: italic;
   margin: 0;
+  padding: var(--space-2);
 }
 
 /* Footer */
 .form-card-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
   margin-top: var(--space-4);
   padding-top: var(--space-4);
   border-top: 1px solid var(--border-light);
 }
 
-.edit-form-btn {
-  background: var(--primary);
-  color: white;
-  border: none;
-  padding: var(--space-2) var(--space-4);
+.confidence-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
   font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  font-family: var(--font-family-primary);
-}
-
-.edit-form-btn:hover {
-  background: var(--primary-hover);
-  box-shadow: var(--shadow-sm);
-}
-
-.edit-form-btn:focus {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
 }
 
 /* Responsive */
 @media (max-width: 768px) {
   .form-card {
     padding: var(--space-4);
-    margin-bottom: var(--space-4);
   }
 
   .patient-info-grid {
     grid-template-columns: 1fr;
-    gap: var(--space-2);
+    gap: var(--space-3);
   }
 
   .form-card-header {
     flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-2);
+    gap: var(--space-3);
+    align-items: stretch;
   }
 
-  .commitment-item,
-  .sample-item {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-2);
+  .form-edit-btn {
+    width: 100%;
+  }
+
+  .commitment-item {
+    flex-wrap: wrap;
   }
 
   .resolve-btn {
     width: 100%;
+    margin-top: var(--space-2);
   }
 }

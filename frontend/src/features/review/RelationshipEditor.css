@@ -1,185 +1,184 @@
 /**
- * RelationshipEditor Styles - Tzalul Theme
- * Modal for manual commitment-to-sample linking
+ * RelationshipEditor Modal Styles
+ * Agent B - MVP 8-hour implementation
  */
 
-/* Modal specific to relationship editor */
+/* Modal Overlay (reuse pattern from EditFieldModal) */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(25, 53, 73, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: var(--z-modal-backdrop);
+  direction: rtl;
+}
+
+/* Relationship Editor Modal */
 .relationship-editor-modal {
-  max-width: 900px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
   width: 90%;
-}
-
-.relationship-editor-body {
-  display: grid;
-  grid-template-columns: 1fr 1.5fr;
-  gap: var(--space-6);
-  padding: var(--space-6);
-  max-height: 60vh;
-  overflow: hidden;
-}
-
-/* Commitment Details Panel */
-.commitment-details-panel {
+  max-width: 700px;
+  max-height: 85vh;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  direction: rtl;
+  z-index: var(--z-modal);
+}
+
+/* Modal Header */
+.relationship-editor-modal .modal-header {
+  padding: var(--space-6);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.relationship-editor-modal .modal-header h3 {
+  margin: 0;
+  font-size: var(--font-xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.relationship-editor-modal .close-button {
+  background: transparent;
+  border: none;
+  font-size: var(--font-2xl);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.relationship-editor-modal .close-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Modal Body */
+.relationship-editor-modal .modal-body {
+  padding: var(--space-6);
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* Commitment Panel */
+.commitment-panel {
   padding: var(--space-4);
   background: var(--bg);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  direction: rtl;
-  text-align: right;
 }
 
-.commitment-details-panel h4 {
-  margin: 0;
-  font-size: var(--font-lg);
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border-light);
-}
-
-.commitment-info {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.info-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.info-label {
-  font-size: var(--font-sm);
-  color: var(--text-secondary);
-  font-weight: var(--weight-medium);
-}
-
-.info-value {
+.commitment-panel h4 {
+  margin: 0 0 var(--space-3) 0;
   font-size: var(--font-base);
-  color: var(--text-primary);
-  font-weight: var(--weight-normal);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+
+.commitment-display {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .commitment-number-display {
-  font-weight: var(--weight-semibold);
-  color: var(--primary);
   font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
 }
 
-.status-badge {
+.current-status {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  width: fit-content;
-}
-
-.status-badge.status-green {
-  background: var(--success-bg);
-  color: var(--success-text);
-  border: 1px solid var(--success-border);
-}
-
-.status-badge.status-orange {
   background: var(--warning-bg);
   color: var(--warning-text);
   border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
 }
 
-.status-badge.status-red {
-  background: var(--error-bg);
-  color: var(--error-text);
-  border: 1px solid var(--error-border);
-}
-
-/* Samples Selection Panel */
-.samples-selection-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  direction: rtl;
-  text-align: right;
-  overflow: hidden;
-}
-
-.samples-selection-panel h4 {
-  margin: 0;
-  font-size: var(--font-lg);
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
-}
-
-.panel-instructions {
+.helper-text {
   margin: 0;
   font-size: var(--font-sm);
   color: var(--text-secondary);
 }
 
-.empty-samples-message {
+/* Samples Panel */
+.samples-panel {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-12);
-  background: var(--bg);
-  border-radius: var(--radius-md);
-  border: 1px dashed var(--border);
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-.empty-samples-message p {
+.samples-panel h4 {
   margin: 0;
-  color: var(--text-tertiary);
-  font-style: italic;
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
 }
 
-/* Samples Selection List */
 .samples-selection-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  max-height: 300px;
   overflow-y: auto;
-  flex: 1;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
   padding: var(--space-2);
-  background: var(--surface);
-}
-
-.sample-selection-item {
+  background: var(--bg);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-  background: var(--surface);
 }
 
-.sample-selection-item:hover {
-  background: var(--bg-hover);
-  border-color: var(--primary);
-}
-
-.sample-checkbox-label {
+/* Sample Checkbox Item */
+.sample-checkbox-item {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  width: 100%;
+  transition: all var(--transition-fast);
 }
 
-.sample-checkbox-label input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
+.sample-checkbox-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--primary);
+}
+
+.sample-checkbox-item.selected {
+  background: var(--selected-bg);
+  border-color: var(--primary);
+}
+
+.sample-checkbox-item input[type="checkbox"] {
+  width: 1.25rem;
+  height: 1.25rem;
   cursor: pointer;
-  flex-shrink: 0;
   accent-color: var(--primary);
 }
 
@@ -190,92 +189,147 @@
   flex: 1;
 }
 
-.sample-central-display {
-  font-size: var(--font-base);
-  color: var(--text-primary);
-}
-
-.sample-central-display strong {
+.sample-central {
   font-weight: var(--weight-semibold);
-  color: var(--primary);
+  color: var(--text-primary);
+  font-size: var(--font-base);
 }
 
-.sample-date-display {
+.sample-date {
   font-size: var(--font-sm);
   color: var(--text-secondary);
 }
 
 /* Selection Summary */
 .selection-summary {
-  padding: var(--space-3);
+  padding: var(--space-4);
   background: var(--selected-bg);
   border: 1px solid var(--primary);
-  border-radius: var(--radius-sm);
-  text-align: center;
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  color: var(--primary);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
-/* Button Styles (extends EditFieldModal styles) */
-.button-danger {
-  background-color: var(--error-text);
-  color: white;
-  border: none;
-  padding: 0 var(--space-6);
-  height: var(--button-height);
+.selection-summary strong {
+  font-size: var(--font-sm);
+  color: var(--text-primary);
+}
+
+.selected-items {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  direction: rtl;
+}
+
+/* Empty Message */
+.empty-message {
+  text-align: center;
+  padding: var(--space-6);
+  color: var(--text-tertiary);
+  font-size: var(--font-sm);
+  font-style: italic;
+}
+
+/* Modal Footer */
+.relationship-editor-modal .modal-footer {
+  padding: var(--space-6);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-start;
+  gap: var(--space-3);
+}
+
+.relationship-editor-modal .button-secondary {
+  padding: var(--space-2) var(--space-6);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: var(--font-base);
-  font-weight: var(--weight-semibold);
   cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
   transition: all var(--transition-fast);
   font-family: var(--font-family-primary);
 }
 
-.button-danger:hover:not(:disabled) {
-  background-color: var(--error-hover);
+.relationship-editor-modal .button-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+}
+
+.relationship-editor-modal .button-danger {
+  padding: var(--space-2) var(--space-6);
+  background: var(--error-text);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  transition: all var(--transition-fast);
+  font-family: var(--font-family-primary);
+}
+
+.relationship-editor-modal .button-danger:hover {
+  background: var(--error-hover);
   box-shadow: var(--shadow-sm);
 }
 
-.button-danger:disabled {
+.relationship-editor-modal .button-primary {
+  padding: var(--space-2) var(--space-6);
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  transition: all var(--transition-fast);
+  font-family: var(--font-family-primary);
+}
+
+.relationship-editor-modal .button-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.relationship-editor-modal .button-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-/* Responsive */
-@media (max-width: 1024px) {
-  .relationship-editor-body {
-    grid-template-columns: 1fr;
-    max-height: 70vh;
-    overflow-y: auto;
-  }
-
-  .samples-selection-panel {
-    max-height: 400px;
-  }
+.relationship-editor-modal .button-primary:focus,
+.relationship-editor-modal .button-secondary:focus,
+.relationship-editor-modal .button-danger:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
+/* Responsive */
 @media (max-width: 768px) {
   .relationship-editor-modal {
-    width: 100%;
-    max-width: 100%;
-    max-height: 100vh;
-    border-radius: 0;
+    width: 95%;
+    max-height: 90vh;
   }
 
-  .relationship-editor-body {
+  .relationship-editor-modal .modal-header,
+  .relationship-editor-modal .modal-body,
+  .relationship-editor-modal .modal-footer {
     padding: var(--space-4);
-    gap: var(--space-4);
   }
 
-  .modal-footer {
+  .relationship-editor-modal .modal-footer {
     flex-direction: column;
-    gap: var(--space-2);
   }
 
-  .button-primary,
-  .button-secondary,
-  .button-danger {
+  .relationship-editor-modal .button-primary,
+  .relationship-editor-modal .button-secondary,
+  .relationship-editor-modal .button-danger {
     width: 100%;
+  }
+
+  .samples-selection-list {
+    max-height: 200px;
   }
 }

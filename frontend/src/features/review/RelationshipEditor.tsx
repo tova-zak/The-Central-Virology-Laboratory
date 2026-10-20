@@ -1,28 +1,44 @@
 /**
- * RelationshipEditor Component
+ * RelationshipEditor Component - Manual Commitment-Sample Linking
  * 
- * Modal for manually linking unresolved commitments to samples
- * Allows user to:
- * - See commitment details
- * - Select one or more samples (checkbox selection)
- * - Assign explicit relationship
- * - Disconnect relationship
+ * Allows users to resolve unresolved commitment-sample relationships.
+ * Conforms to actual backend API contract: central_number_refs + relation_status.
  * 
- * Part of MVP 8-hour push - Form-based review UI
+ * Agent B - MVP 8-hour implementation (Iteration 2: API contract conformance)
  */
 import React, { useState, useEffect } from 'react';
 import './RelationshipEditor.css';
-import { CommitmentRecord, Sample } from '../../services/api';
-import { getFieldDisplayValue } from './utils/editPermissions';
+import { CommitmentRecord, Sample, FieldValue } from '../../services/api';
 
 interface RelationshipEditorProps {
   isOpen: boolean;
   commitment: CommitmentRecord;
-  samples: Sample[];
-  onResolve: (commitmentId: string, sampleIds: string[], newStatus: 'explicit') => void;
+  samples: Sample[]; // All samples in the batch
+  onResolve: (commitmentId: string, centralNumberRefs: string[], newStatus: 'related' | 'unrelated') => void;
   onDisconnect: (commitmentId: string) => void;
   onClose: () => void;
 }
+
+/**
+ * Get display value from FieldValue
+ */
+const getFieldDisplayValue = (field: FieldValue<any> | null | undefined): string => {
+  if (!field) return '-';
+  
+  if (field.review_state === 'human_verified' && field.reviewed_value != null) {
+    return String(field.reviewed_value);
+  }
+  
+  if (field.normalized_value != null) {
+    return String(field.normalized_value);
+  }
+  
+  if (field.raw_value != null) {
+    return String(field.raw_value);
+  }
+  
+  return '-';
+};
 
 export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
   isOpen,
@@ -32,47 +48,53 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
   onDisconnect,
   onClose
 }) => {
-  const [selectedSampleIds, setSelectedSampleIds] = useState<string[]>([]);
+  // Track selected central numbers (NOT sample IDs - backend expects central_number_refs)
+  const [selectedCentralNumbers, setSelectedCentralNumbers] = useState<string[]>([]);
 
-  // Initialize with existing sample_ids if present
   useEffect(() => {
-    if (commitment.sample_ids && commitment.sample_ids.length > 0) {
-      setSelectedSampleIds(commitment.sample_ids);
+    // Initialize with current central_number_refs if any
+    if (isOpen && commitment.central_number_refs) {
+      setSelectedCentralNumbers([...commitment.central_number_refs]);
     } else {
-      setSelectedSampleIds([]);
+      setSelectedCentralNumbers([]);
     }
-  }, [commitment.commitment_record_id, isOpen]);
+  }, [isOpen, commitment]);
 
   if (!isOpen) return null;
 
-  const handleToggleSample = (sampleId: string) => {
-    setSelectedSampleIds(prev => {
-      if (prev.includes(sampleId)) {
-        return prev.filter(id => id !== sampleId);
+  const commitmentNumber = getFieldDisplayValue(commitment.commitment_number);
+
+  const handleToggleCentralNumber = (centralNumber: string) => {
+    setSelectedCentralNumbers(prev => {
+      if (prev.includes(centralNumber)) {
+        return prev.filter(cn => cn !== centralNumber);
       } else {
-        return [...prev, sampleId];
+        return [...prev, centralNumber];
       }
     });
   };
 
-  const handleAssign = () => {
-    if (selectedSampleIds.length === 0) {
-      alert('יש לבחור לפחות דגימה אחת');
+  const handleResolve = () => {
+    if (selectedCentralNumbers.length === 0) {
+      alert('אנא בחר לפחות מספר מרכזי אחד או נתק את הקשר');
       return;
     }
-    onResolve(commitment.commitment_record_id, selectedSampleIds, 'explicit');
-    onClose();
+    
+    // User selection = explicit confirmation = 'related'
+    onResolve(commitment.commitment_record_id, selectedCentralNumbers, 'related');
   };
 
   const handleDisconnect = () => {
-    if (confirm('האם לנתק את ההתחייבות מכל הדגימות?')) {
-      onDisconnect(commitment.commitment_record_id);
-      onClose();
+    if (!window.confirm('האם לנתק את ההתחייבות מכל הדגימות?')) {
+      return;
     }
+    
+    // Disconnect = empty refs + 'unrelated'
+    onDisconnect(commitment.commitment_record_id);
   };
 
   const handleCancel = () => {
-    setSelectedSampleIds([]);
+    setSelectedCentralNumbers(commitment.central_number_refs || []);
     onClose();
   };
 
@@ -82,129 +104,101 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
     }
   };
 
-  const commitmentNumberDisplay = getFieldDisplayValue(commitment.commitment_number);
-  const currentStatus = commitment.relationship_status || commitment.relation_status;
-
   return (
-    <div 
-      className="modal-overlay" 
-      onClick={handleCancel}
-      onKeyDown={handleKeyDown}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="relationship-editor-title"
-    >
-      <div className="modal-content relationship-editor-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={handleCancel} onKeyDown={handleKeyDown}>
+      <div
+        className="relationship-editor-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="relationship-editor-title"
+        aria-modal="true"
+      >
         <div className="modal-header">
-          <h3 id="relationship-editor-title">יישוב קשר התחייבות</h3>
+          <h3 id="relationship-editor-title">פתרון קשר התחייבות-דגימות</h3>
           <button className="close-button" onClick={handleCancel} aria-label="סגור">
             ×
           </button>
         </div>
 
-        <div className="modal-body relationship-editor-body">
-          {/* Commitment Details Panel */}
-          <div className="commitment-details-panel">
-            <h4>פרטי התחייבות</h4>
-            <div className="commitment-info">
-              <div className="info-row">
-                <span className="info-label">מספר התחייבות:</span>
-                <span className="info-value commitment-number-display">
-                  {Array.isArray(commitmentNumberDisplay) 
-                    ? commitmentNumberDisplay.join(', ') 
-                    : commitmentNumberDisplay || '—'}
-                </span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">סטטוס נוכחי:</span>
-                <span className={`info-value status-badge status-${
-                  currentStatus === 'explicit' || currentStatus === 'clear' || currentStatus === 'manual' 
-                    ? 'green' 
-                    : currentStatus === 'unresolved_relationship' || currentStatus === 'ambiguous' 
-                    ? 'orange' 
-                    : 'red'
-                }`}>
-                  {currentStatus === 'explicit' && '✅ קשר מאומת'}
-                  {currentStatus === 'inferred' && '✅ קשר משוער'}
-                  {currentStatus === 'clear' && '✅ קשר ברור'}
-                  {currentStatus === 'manual' && '✅ קשר ידני'}
-                  {currentStatus === 'unresolved_relationship' && '⚠️ דורש ביקורת'}
-                  {currentStatus === 'ambiguous' && '⚠️ לא ברור'}
-                  {currentStatus === 'none' && '❌ לא משוייך'}
-                </span>
-              </div>
-              {commitment.sample_ids && commitment.sample_ids.length > 0 && (
-                <div className="info-row">
-                  <span className="info-label">דגימות קיימות:</span>
-                  <span className="info-value">{commitment.sample_ids.length}</span>
-                </div>
-              )}
+        <div className="modal-body">
+          {/* Commitment Info */}
+          <div className="commitment-panel">
+            <h4>התחייבות</h4>
+            <div className="commitment-display">
+              <span className="commitment-number-display">{commitmentNumber}</span>
+              <span className="current-status">
+                {commitment.relationship_status === 'unresolved_relationship' && '⚠️ דורש ביקורת'}
+                {commitment.relationship_status === 'none' && '❌ לא משוייך'}
+                {commitment.relationship_status === 'explicit' && '✅ קשר מאומת'}
+                {commitment.relationship_status === 'inferred' && '✅ קשר מוסק'}
+                {!commitment.relationship_status && commitment.relation_status === 'ambiguous' && '⚠️ לא ברור (ישן)'}
+              </span>
             </div>
+            <p className="helper-text">
+              בחר את המספרים המרכזיים (דגימות) המשויכים להתחייבות זו
+            </p>
           </div>
 
-          {/* Samples Selection Panel */}
-          <div className="samples-selection-panel">
+          {/* Samples Selection */}
+          <div className="samples-panel">
             <h4>דגימות זמינות ({samples.length})</h4>
-            <p className="panel-instructions">בחר דגימה אחת או יותר לשיוך להתחייבות</p>
-            
             {samples.length === 0 ? (
-              <div className="empty-samples-message">
-                <p>אין דגימות זמינות לשיוך</p>
-              </div>
+              <p className="empty-message">אין דגימות זמינות באצווה זו</p>
             ) : (
-              <ul className="samples-selection-list" role="list">
-                {samples.map(sample => {
+              <div className="samples-selection-list">
+                {samples.map((sample) => {
                   const centralNumber = getFieldDisplayValue(sample.central_number);
                   const receivedDate = getFieldDisplayValue(sample.received_date);
-                  const isSelected = selectedSampleIds.includes(sample.sample_id);
-                  
+                  const isSelected = selectedCentralNumbers.includes(centralNumber);
+
                   return (
-                    <li key={sample.sample_id} className="sample-selection-item">
-                      <label className="sample-checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleToggleSample(sample.sample_id)}
-                          aria-label={`דגימה ${centralNumber}`}
-                        />
-                        <div className="sample-info">
-                          <span className="sample-central-display">
-                            מס׳ מרכזי: <strong>{centralNumber}</strong>
-                          </span>
-                          <span className="sample-date-display">
-                            תאריך קבלה: {receivedDate}
-                          </span>
-                        </div>
-                      </label>
-                    </li>
+                    <label
+                      key={sample.sample_id}
+                      className={`sample-checkbox-item ${isSelected ? 'selected' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleToggleCentralNumber(centralNumber)}
+                        aria-label={`בחר דגימה ${centralNumber}`}
+                      />
+                      <div className="sample-info">
+                        <span className="sample-central">{centralNumber}</span>
+                        <span className="sample-date">{receivedDate}</span>
+                      </div>
+                    </label>
                   );
                 })}
-              </ul>
+              </div>
             )}
-            
-            <div className="selection-summary">
-              נבחרו {selectedSampleIds.length} מתוך {samples.length} דגימות
-            </div>
           </div>
+
+          {/* Selection Summary */}
+          {selectedCentralNumbers.length > 0 && (
+            <div className="selection-summary">
+              <strong>נבחרו {selectedCentralNumbers.length} דגימות:</strong>
+              <span className="selected-items">{selectedCentralNumbers.join(', ')}</span>
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">
           <button className="button-secondary" onClick={handleCancel}>
             ביטול
           </button>
-          <button 
-            className="button-danger" 
+          <button
+            className="button-danger"
             onClick={handleDisconnect}
-            disabled={!commitment.sample_ids || commitment.sample_ids.length === 0}
+            title="נתק התחייבות זו מכל הדגימות"
           >
             נתק קשר
           </button>
-          <button 
-            className="button-primary" 
-            onClick={handleAssign}
-            disabled={selectedSampleIds.length === 0}
+          <button
+            className="button-primary"
+            onClick={handleResolve}
+            disabled={selectedCentralNumbers.length === 0}
           >
-            שייך לדגימות ({selectedSampleIds.length})
+            שייך לדגימות
           </button>
         </div>
       </div>

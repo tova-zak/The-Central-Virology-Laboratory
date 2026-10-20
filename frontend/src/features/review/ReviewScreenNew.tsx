@@ -174,14 +174,14 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
 
   const handleResolveRelationshipFromEditor = async (
     commitmentId: string,
-    sampleIds: string[],
-    _newStatus: 'explicit'
+    centralNumberRefs: string[],
+    newStatus: 'related' | 'unrelated'
   ) => {
     try {
-      // For MVP, we'll call the existing resolve endpoint
-      // Backend should be updated to accept sample_ids
+      // Backend API expects central_number_refs + relation_status ('related' | 'unrelated')
+      // NOT sample_ids or relationship_status
       const { resolveCommitmentRelationship } = await import('../../services/api');
-      await resolveCommitmentRelationship(batchId, commitmentId, sampleIds, 'related');
+      await resolveCommitmentRelationship(batchId, commitmentId, centralNumberRefs, newStatus);
       setRelationshipEditorModal(null);
       await loadBatchData();
     } catch (err: any) {
@@ -192,6 +192,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
   const handleDisconnectRelationship = async (commitmentId: string) => {
     try {
       const { resolveCommitmentRelationship } = await import('../../services/api');
+      // Disconnect = empty refs + 'unrelated'
       await resolveCommitmentRelationship(batchId, commitmentId, [], 'unrelated');
       setRelationshipEditorModal(null);
       await loadBatchData();
@@ -260,11 +261,11 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
       const idNumber = getFieldDisplayValue(form.patient_id_number) as string;
       const sender = getFieldDisplayValue(form.sender) as string;
       return (
-        firstName?.toLowerCase().includes(searchLower) ||
-        lastName?.toLowerCase().includes(searchLower) ||
-        idNumber?.includes(searchLower) ||
-        sender?.toLowerCase().includes(searchLower) ||
-        form.form_id.toLowerCase().includes(searchLower)
+        (firstName && firstName.toLowerCase().includes(searchLower)) ||
+        (lastName && lastName.toLowerCase().includes(searchLower)) ||
+        (idNumber && idNumber.includes(searchLower)) ||
+        (sender && sender !== '-' && sender.toLowerCase().includes(searchLower)) ||
+        (form.form_id && form.form_id.toLowerCase().includes(searchLower))
       );
     });
   };
