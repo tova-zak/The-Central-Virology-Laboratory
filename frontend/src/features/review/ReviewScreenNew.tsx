@@ -2,12 +2,13 @@
  * ReviewScreen - Three-Table Redesign
  * 
  * Displays extracted records in three tables based on classification:
- * - Table 1: טפסים שחולצו בהצלחה (success - read-only)
+ * - Table 1: טפסים ללא התראות (no warnings - read-only)
  * - Table 2: טפסים עם הערות לבדיקה (warnings - only problematic fields editable)
  * - Table 3: טפסים הדורשים השלמה ידנית (missing - only missing fields editable)
  */
 import React, { useState, useEffect } from 'react';
 import './ReviewScreen.css';
+import './ReviewScreenExtras.css';
 import { 
   getBatchStatus, 
   updateField,
@@ -30,6 +31,13 @@ import { FormCard } from './FormCard';
 import { RelationshipEditor } from './RelationshipEditor';
 import { CommitmentReviewTable } from './CommitmentReviewTable';
 import { validateEditedValue } from './utils/evidence';
+import {
+  getErrorMessage,
+  formatExportBlocker,
+  getRecordStatusLabel,
+  getExtractionErrorMessage,
+  formatRetryAfter
+} from '../../utils/hebrewMessages';
 
 interface ReviewScreenProps {
   batchId: string;
@@ -136,7 +144,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
         setViewMode('cards');
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to load batch data');
+      console.error('Failed to load batch data:', err);
+      setError(getErrorMessage(err, 'loadBatch'));
     } finally {
       setLoading(false);
     }
@@ -148,7 +157,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       await loadBatchData(); // Reload to reclassify
       setEditModal(null);
     } catch (err: any) {
-      alert(`Failed to update field: ${err.message}`);
+      console.error('Failed to update field:', err);
+      alert(`שמירת התיקון נכשלה: ${getErrorMessage(err, 'updateField')}`);
     }
   };
 
@@ -157,9 +167,11 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       await rejectFieldCandidate(batchId, recordId, fieldName, value);
       await loadBatchData();
     } catch (err: any) {
-      alert(`לא ניתן לדחות את המועמד: ${err.response?.data?.detail || err.message || 'שגיאה לא צפויה'}`);
+      console.error('Failed to reject candidate:', err);
+      alert(`דחיית המועמד נכשלה: ${getErrorMessage(err, 'rejectCandidate')}`);
     }
   };
+
   const handleAssignCommitment = async (commitmentId: string, testId: string) => {
     try {
       const { assignCommitmentToTest } = await import('../../services/api');
@@ -167,7 +179,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       setAssignModal(null);
       await loadBatchData(); // Reload to show updated classification
     } catch (err: any) {
-      alert(`שגיאה בשיוך התחייבות: ${err.message || 'שגיאה לא צפויה'}`);
+      console.error('Failed to assign commitment:', err);
+      alert(`שיוך ההתחייבות לא הצליח: ${getErrorMessage(err, 'assign')}`);
     }
   };
 
@@ -183,24 +196,25 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       setResolveModal(null);
       await loadBatchData(); // Reload to show updated classification
     } catch (err: any) {
-      alert(`שגיאה בפתרון קשר: ${err.message || 'שגיאה לא צפויה'}`);
+      console.error('Failed to resolve relationship:', err);
+      alert(`אישור הקשר לא הצליח: ${getErrorMessage(err, 'resolve')}`);
     }
   };
 
   const handleResolveRelationshipFromEditor = async (
     commitmentId: string,
-    sampleIds: string[],
-    _newStatus: 'explicit'
+    centralNumberRefs: string[],
+    newStatus: 'related' | 'unrelated'
   ) => {
     try {
-      // For MVP, we'll call the existing resolve endpoint
-      // Backend should be updated to accept sample_ids
+      // Backend API expects central_number_refs + relation_status ('related' | 'unrelated')
       const { resolveCommitmentRelationship } = await import('../../services/api');
-      await resolveCommitmentRelationship(batchId, commitmentId, sampleIds, 'related');
+      await resolveCommitmentRelationship(batchId, commitmentId, centralNumberRefs, newStatus);
       setRelationshipEditorModal(null);
       await loadBatchData();
     } catch (err: any) {
-      alert(`שגיאה בשיוך דגימות: ${err.message || 'שגיאה לא צפויה'}`);
+      console.error('Failed to assign samples:', err);
+      alert(`שיוך הדגימות לא הצליח: ${getErrorMessage(err, 'resolve')}`);
     }
   };
 
@@ -211,7 +225,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       setRelationshipEditorModal(null);
       await loadBatchData();
     } catch (err: any) {
-      alert(`שגיאה בניתוק קשר: ${err.message || 'שגיאה לא צפויה'}`);
+      console.error('Failed to disconnect relationship:', err);
+      alert(`ניתוק הקשר לא הצליח: ${getErrorMessage(err, 'resolve')}`);
     }
   };
 
@@ -222,9 +237,10 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
     if (!exportEligibility?.can_export || hasUnresolvedRelationships > 0) {
       const blockers = exportEligibility?.blockers || [];
       if (hasUnresolvedRelationships > 0) {
-        blockers.push(`${hasUnresolvedRelationships} קשרים לא פתורים`);
+        blockers.push(`${hasUnresolvedRelationships} קשרים שטרם נפתרו`);
       }
-      alert(`לא ניתן לייצא - יש ${blockers.length} חוסמים:\n${blockers.join('\n')}`);
+      const blockerLines = blockers.map(b => '• ' + (b.endsWith('שטרם נפתרו') ? b : formatExportBlocker(b)));
+      alert(`לא ניתן להוריד קובץ אקסל כרגע. יש ${blockers.length} פריטים שחוסמים את ההורדה:\n${blockerLines.join('\n')}`);
       return;
     }
 
@@ -232,9 +248,9 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       const { exportBatch } = await import('../../services/api');
       
       // Show loading state
-      const originalText = 'ייצא ל-Excel';
+      const originalText = 'הורדת קובץ אקסל';
       const button = document.querySelector('.export-btn') as HTMLButtonElement;
-      if (button) button.textContent = 'מוריד...';
+      if (button) button.textContent = 'מוריד…';
       
       // Get the Excel blob
       const blob = await exportBatch(batchId);
@@ -254,15 +270,15 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       // Reset button text
       if (button) button.textContent = originalText;
       
-      alert('הקובץ הורד בהצלחה!');
+      alert('הקובץ ירד למחשב.');
     } catch (err: any) {
-      alert(`שגיאה בייצוא: ${err.response?.data?.detail || err.message || 'שגיאה לא צפויה'}`);
+      alert(`הורדת הקובץ נכשלה. ${getErrorMessage(err, 'export')}`);
       console.error('Export error:', err);
     }
   };
 
-  if (loading) return <div className="review-screen loading">טוען נתונים...</div>;
-  if (error) return <div className="review-screen error">שגיאה: {error}</div>;
+  if (loading) return <div className="review-screen loading" role="status">טוען את נתוני קבוצת המסמכים…</div>;
+  if (error) return <div className="review-screen error" role="alert">לא ניתן היה לטעון את הנתונים: {error}</div>;
   if (!batchData || !classified) return null;
 
   // Helper: Filter forms based on search query
@@ -275,11 +291,11 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       const idNumber = getFieldDisplayValue(form.patient_id_number) as string;
       const sender = getFieldDisplayValue(form.sender) as string;
       return (
-        firstName?.toLowerCase().includes(searchLower) ||
-        lastName?.toLowerCase().includes(searchLower) ||
-        idNumber?.includes(searchLower) ||
-        sender?.toLowerCase().includes(searchLower) ||
-        form.form_id.toLowerCase().includes(searchLower)
+        (firstName && firstName.toLowerCase().includes(searchLower)) ||
+        (lastName && lastName.toLowerCase().includes(searchLower)) ||
+        (idNumber && idNumber.includes(searchLower)) ||
+        (sender && sender !== '-' && sender.toLowerCase().includes(searchLower)) ||
+        (form.form_id && form.form_id.toLowerCase().includes(searchLower))
       );
     });
   };
@@ -301,7 +317,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
     if (!batchData.forms || batchData.forms.length === 0) {
       return (
         <div className="empty-state">
-          <p>אין טפסים זמינים. עובר לתצוגת טבלאות...</p>
+          <p>אין טפסים להצגה בתצוגה זו. אפשר לעבור לתצוגת טבלאות.</p>
         </div>
       );
     }
@@ -314,7 +330,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
           <div className="cards-search-controls">
             <input
               type="search"
-              placeholder="חיפוש לפי שם, ת.ז., גורם שולח או מספר טופס..."
+              placeholder="חיפוש לפי שם, מספר זהות, גורם שולח או מזהה טופס…"
               value={searchCards}
               onChange={(e) => setSearchCards(e.target.value)}
               className="search-input"
@@ -323,13 +339,13 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
           </div>
           <div className="cards-summary">
             {filtered.length === batchData.forms.length ? (
-              <span>מציג {batchData.forms.length} טפסים</span>
+              <span>מוצגים <bdi dir="ltr">{batchData.forms.length}</bdi> טפסים</span>
             ) : (
-              <span>מציג {filtered.length} מתוך {batchData.forms.length} טפסים</span>
+              <span>מוצגים <bdi dir="ltr">{filtered.length}</bdi> מתוך <bdi dir="ltr">{batchData.forms.length}</bdi> טפסים</span>
             )}
             {batchData.statistics && batchData.statistics.unresolved_relationships > 0 && (
               <span className="unresolved-badge">
-                ⚠️ {batchData.statistics.unresolved_relationships} קשרים לא פתורים
+                <span aria-hidden="true">⚠️</span> <bdi dir="ltr">{batchData.statistics.unresolved_relationships}</bdi> קשרים שטרם נפתרו
               </span>
             )}
           </div>
@@ -344,7 +360,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
               commitments={getCommitmentsForForm(form.form_id)}
               onEdit={(formId) => {
                 // For MVP, editing is not implemented at form level
-                alert(`עריכת טופס ${formId} תהיה זמינה בגרסה עתידית`);
+                alert(`עריכה ישירה של הטופס ${formId} אינה זמינה כרגע. ניתן לתקן שדות בודדים בתצוגת הטבלאות.`);
               }}
               onResolveRelationship={(commitmentId) => {
                 const commitment = batchData.commitment_records.find(
@@ -408,17 +424,19 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
         <div className="table-controls">
           <input
             type="text"
-            placeholder="חיפוש לפי שם, ת.ז., או מספר טופס..."
+            placeholder="חיפוש לפי שם, מספר זהות או מזהה טופס…"
+            aria-label={`חיפוש בטבלה: ${title}`}
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="search-input"
           />
         </div>
 
+<div className="table-wrapper">
         <table className="review-table" dir="rtl">
           <thead>
             <tr>
-              <th>מספר סידורי</th>
+              <th>מס׳</th>
               <th>שם פרטי</th>
               <th>שם משפחה</th>
               <th>מספר זהות</th>
@@ -426,21 +444,22 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
               <th>תאריך קבלה</th>
               <th>גורם שולח</th>
               <th>מספרי התחייבות</th>
-              <th>הערות/סיבה</th>
-              <th>סטטוס ביקורת</th>
-              {showViewColumn && <th>צפייה</th>}
+              <th>הערות</th>
+              <th>מצב הטופס</th>
+              {showViewColumn && <th>צפייה במסמך</th>}
             </tr>
           </thead>
           <tbody>
             {paginated.map((record, idx) => renderRow(record, (page - 1) * PAGE_SIZE + idx + 1, showViewColumn))}
           </tbody>
         </table>
+        </div>
 
         {totalPages > 1 && (
           <div className="pagination">
-            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1}>הקודם</button>
-            <span>עמוד {page} מתוך {totalPages}</span>
-            <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages}>הבא</button>
+            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} aria-label="העמוד הקודם">הקודם</button>
+            <span>עמוד <bdi dir="ltr">{page}</bdi> מתוך <bdi dir="ltr">{totalPages}</bdi></span>
+            <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} aria-label="העמוד הבא">הבא</button>
           </div>
         )}
       </div>
@@ -469,7 +488,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
             
             return (
               <span key={i} className={item.hasWarning || isAmbiguous ? 'field-warning' : ''}>
-                {item.value}
+                <bdi dir="auto">{item.value}</bdi>
                 {isAmbiguous && (
                   <button
                     className="resolve-btn-inline"
@@ -478,7 +497,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
                       commitment: commitment!,
                       testRecord: record
                     })}
-                    title="יישוב קשר לא ברור"
+                    title="אישור או ניתוק קשר שאינו ברור"
+                    aria-label="אישור או ניתוק קשר שאינו ברור"
                   >
                     🔗
                   </button>
@@ -487,6 +507,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
                   <button
                     className="edit-btn-inline"
                     onClick={() => openEditModal(record.test_id, 'commitment_number', item.value)}
+                    title="עריכת מספר התחייבות"
+                    aria-label="עריכת מספר התחייבות"
                   >
                     ✏️
                   </button>
@@ -497,7 +519,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
           })}
         </td>
         <td>-</td>
-        <td className={`status-cell status-${recordStatus}`}>{recordStatus}</td>
+        <td className={`status-cell status-${recordStatus}`}>{getRecordStatusLabel(recordStatus)}</td>
         {showViewColumn && (
           <td>
             <button 
@@ -509,7 +531,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
               })}
               title="צפייה במסמך המקורי"
             >
-              👁️ צפה
+              <span aria-hidden="true">👁️</span> צפייה במסמך
             </button>
           </td>
         )}
@@ -533,16 +555,27 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
 
     return (
       <td className={className}>
-        {valueDisplay}
+<bdi dir="auto">{valueDisplay}</bdi>
         {editable && (
           <button
             className="edit-btn-inline"
             onClick={() => openEditModal(record.test_id, fieldName, displayValue)}
+            title={`עריכת השדה: ${getFieldLabel(fieldName)}`}
+            aria-label={`עריכת השדה: ${getFieldLabel(fieldName)}`}
           >
             ✏️
           </button>
         )}
-        {visualState.icon && <span className="icon">{visualState.icon === 'error' ? '❌' : '⚠️'}</span>}
+        {visualState.icon && (
+          <span
+            className="icon"
+            role="img"
+            aria-label={visualState.message}
+            title={visualState.message}
+          >
+            {visualState.icon === 'error' ? '❌' : '⚠️'}
+          </span>
+        )}
       </td>
     );
   };
@@ -561,7 +594,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
   return (
     <div className="review-screen-new" dir="rtl">
       <div className="header">
-        <h1>בדיקת נתונים - אצווה {batchId}</h1>
+        <h1>בדיקת נתונים – קבוצת מסמכים <bdi dir="ltr">{batchId}</bdi></h1>
         <div className="header-actions">
           {/* View Mode Toggle */}
           <div className="view-mode-toggle">
@@ -571,50 +604,73 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
               disabled={!batchData.forms || batchData.forms.length === 0}
               aria-label="תצוגת טפסים"
             >
-              📋 תצוגת טפסים
+              <span aria-hidden="true">📋</span> תצוגת טפסים
             </button>
             <button
               className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
               onClick={() => setViewMode('table')}
               aria-label="תצוגת טבלאות"
             >
-              📊 תצוגת טבלאות
+              <span aria-hidden="true">📊</span> תצוגת טבלאות
             </button>
           </div>
           
-          {onBack && <button onClick={onBack} className="back-btn">חזרה</button>}
+          {onBack && <button onClick={onBack} className="back-btn">חזרה להעלאת מסמכים</button>}
           {exportEligibility && (
             <button
               className={`export-btn ${!exportEligibility.can_export || (batchData.statistics?.unresolved_relationships ?? 0) > 0 ? 'export-btn-blocked' : ''}`}
               onClick={handleExport}
               disabled={!exportEligibility.can_export || (batchData.statistics?.unresolved_relationships ?? 0) > 0}
-              title={!exportEligibility.can_export || (batchData.statistics?.unresolved_relationships ?? 0) > 0 ? 'ייצוא חסום עד לפתרון הבעיות' : 'ייצא לאקסל'}
+              title={!exportEligibility.can_export || (batchData.statistics?.unresolved_relationships ?? 0) > 0 ? 'ההורדה חסומה: יש לטפל בפריטים החוסמים לפני ההורדה' : 'הפעולה מורידה את הנתונים לקובץ אקסל במחשב'}
             >
               {exportEligibility.can_export && (batchData.statistics?.unresolved_relationships ?? 0) === 0
-                ? 'ייצא ל-Excel' 
-                : `ייצא ל-Excel (${exportEligibility.blockers.length + (batchData.statistics?.unresolved_relationships ?? 0)} חוסמים)`}
+                ? 'הורדת קובץ אקסל' 
+                : `הורדת קובץ אקסל (${exportEligibility.blockers.length + (batchData.statistics?.unresolved_relationships ?? 0)} חסימות)`}
             </button>
           )}
         </div>
       </div>
 
       {!!batchData.errors?.length && (
-        <section className="error-box" role="alert" dir="ltr">
-          <h2>Extraction errors</h2>
-          <p>Extraction was incomplete. Failed pages require manual review. Review all required fields before export.</p>
+        <section className="error-box extraction-errors" role="alert">
+          <h2>שגיאות בחילוץ הנתונים</h2>
+          <p>החילוץ לא הושלם. עמודים שנכשלו דורשים בדיקה ידנית. יש לבדוק את כל השדות הנדרשים לפני הורדת קובץ אקסל.</p>
           {onRetryFailed && (
             <button onClick={onRetryFailed} className="retry-failed-btn">
-              Retry failed / skipped pages (pages already extracted or edited are kept)
+              ניסיון חוזר לעמודים שנכשלו או דולגו (עמודים שכבר חולצו או תוקנו נשמרים)
             </button>
           )}
           <ul>{batchData.errors.map((failure, index) => (
-            <li key={index}>
-              {failure.error_code && <strong>{failure.error_code}: </strong>}{failure.error}
-              {failure.page_index !== undefined && <> (page {failure.page_index + 1})</>}
-              {failure.retry_after_seconds != null && <> — retry no earlier than {Math.ceil(failure.retry_after_seconds)} seconds after the failure.</>}
+            <li key={index} className="extraction-error-item">
+              {failure.error_code && <><bdi dir="ltr" className="extraction-error-code">{failure.error_code}</bdi>: </>}
+              {getExtractionErrorMessage(failure)}
+              {failure.page_index !== undefined && <> (עמוד <bdi dir="ltr">{failure.page_index + 1}</bdi>)</>}
+              {failure.retry_after_seconds != null && <>. {formatRetryAfter(failure.retry_after_seconds)}</>}
             </li>
           ))}</ul>
         </section>
+      )}
+      <p className="hint review-guidance">
+        בדקו מול המסמך המקורי את השדות המסומנים כחסרים, לא תקינים או הדורשים בדיקה. סיום העיבוד אינו מהווה אישור אנושי של הנתונים.
+      </p>
+      {exportEligibility && (
+        (exportEligibility.can_export && (batchData.statistics?.unresolved_relationships ?? 0) === 0) ? (
+          <p className="hint review-guidance">
+            הכפתור „הורדת קובץ אקסל” מוריד את הנתונים לקובץ אקסל במחשב.
+          </p>
+        ) : (
+          <div className="hint review-guidance review-guidance-blocked">
+            <p>הורדת קובץ אקסל חסומה. מה שעדיין מונע את ההורדה:</p>
+            <ul>
+              {exportEligibility.blockers.map((b, i) => (
+                <li key={i}>{formatExportBlocker(b)}</li>
+              ))}
+              {(batchData.statistics?.unresolved_relationships ?? 0) > 0 && (
+                <li><bdi dir="ltr">{batchData.statistics?.unresolved_relationships}</bdi> קשרים שטרם נפתרו</li>
+              )}
+            </ul>
+          </div>
+        )
       )}
 
       {/* Render based on view mode */}
@@ -634,23 +690,23 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
           {/* Orphaned Commitments Section */}
           {classified.orphanedCommitments && classified.orphanedCommitments.length > 0 && (
             <div className="orphaned-commitments-section">
-              <h2 className="warning-header">⚠️ התחייבויות לא משוייכות ({classified.orphanedCommitments.length})</h2>
+              <h2 className="warning-header"><span aria-hidden="true">⚠️</span> התחייבויות שלא שויכו לטופס (<bdi dir="ltr">{classified.orphanedCommitments.length}</bdi>)</h2>
               <div className="orphaned-list">
                 {classified.orphanedCommitments.map((commitment) => (
                   <div key={commitment.commitment_record_id} className="orphaned-item">
-                    <span className="warning-icon">⚠️</span>
-                    <span className="commitment-value">
+                    <span className="warning-icon" aria-hidden="true">⚠️</span>
+                    <span className="commitment-value" dir="auto">
                       {commitment.commitment_number?.reviewed_value || 
                        commitment.commitment_number?.normalized_value || 
                        commitment.commitment_number?.raw_value || 
                        'לא זוהה'}
                     </span>
-                    <span className="orphaned-message">לא משוייכת לבדיקה</span>
+                    <span className="orphaned-message">לא שויכה לטופס</span>
                     <button
                       className="assign-btn"
                       onClick={() => setAssignModal({ isOpen: true, commitment })}
                     >
-                      שייך לבדיקה
+                      שיוך לטופס
                     </button>
                   </div>
                 ))}
@@ -659,7 +715,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
           )}
 
           {renderTable(
-            '✅ טפסים שחולצו בהצלחה',
+            '✅ טפסים ללא התראות',
             classified.table1_success,
             searchTable1,
             setSearchTable1,

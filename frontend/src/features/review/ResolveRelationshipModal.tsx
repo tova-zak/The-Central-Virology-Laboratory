@@ -63,17 +63,17 @@ export const ResolveRelationshipModal: React.FC<ResolveRelationshipModalProps> =
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} dir="rtl">
         <div className="modal-header">
-          <h3>פתרון קשר לא ברור</h3>
-          <button className="modal-close-btn" onClick={onClose}>×</button>
+          <h3>קשר שאינו ברור</h3>
+          <button className="modal-close-btn" onClick={onClose} aria-label="סגירה">×</button>
         </div>
 
         <div className="modal-body">
           <div style={{ marginBottom: '1.5rem' }}>
             <p style={{ marginBottom: '0.5rem' }}>
-              התחייבות מספר: <strong>{commitmentValue}</strong>
+              התחייבות מספר: <strong dir="auto">{commitmentValue}</strong>
             </p>
             <p style={{ color: '#666', fontSize: '0.9rem' }}>
-              בחר את המספרים המרכזיים שאליהם משתייכת ההתחייבות:
+              בחרו את המספרים המרכזיים שההתחייבות שייכת אליהם:
             </p>
           </div>
 
@@ -99,13 +99,13 @@ export const ResolveRelationshipModal: React.FC<ResolveRelationshipModalProps> =
                       onChange={() => toggleCentralNumber(num)}
                       style={{ marginLeft: '0.5rem' }}
                     />
-                    <span style={{ fontWeight: 600 }}>{num}</span>
+                    <span style={{ fontWeight: 600 }} dir="auto">{num}</span>
                   </label>
                 ))}
               </div>
             ) : (
               <p style={{ textAlign: 'center', color: '#999', padding: '1rem' }}>
-                אין מספרים מרכזיים זמינים בבדיקה זו
+                אין מספרים מרכזיים בטופס זה
               </p>
             )}
           </div>
@@ -117,8 +117,8 @@ export const ResolveRelationshipModal: React.FC<ResolveRelationshipModalProps> =
             border: '1px solid #FF9800',
             fontSize: '0.9rem'
           }}>
-            <strong>הסבר:</strong> בחר את המספרים המרכזיים הרלוונטיים להתחייבות זו.
-            אם ההתחייבות לא משתייכת לאף מספר מרכזי בטופס זה, לחץ על "נתק קשר".
+            <strong>הסבר:</strong> סמנו את המספרים המרכזיים הרלוונטיים להתחייבות זו.
+            אם היא אינה שייכת לאף מספר מרכזי בטופס, לחצו על „ניתוק קשר”.
           </div>
         </div>
 
@@ -129,17 +129,17 @@ export const ResolveRelationshipModal: React.FC<ResolveRelationshipModalProps> =
           <button 
             className="modal-btn modal-btn-danger" 
             onClick={handleUnrelate}
-            title="התחייבות זו לא משתייכת לבדיקה זו"
+            title="ההתחייבות אינה שייכת לטופס זה"
           >
-            נתק קשר
+            ניתוק קשר
           </button>
           <button
             className="modal-btn modal-btn-primary"
             onClick={handleConfirm}
             disabled={selectedRefs.length === 0}
-            title="אשר את הקשר למספרים המרכזיים שנבחרו"
+            title="אישור הקשר למספרים המרכזיים שנבחרו"
           >
-            אשר קשר
+            אישור הקשר
           </button>
         </div>
       </div>

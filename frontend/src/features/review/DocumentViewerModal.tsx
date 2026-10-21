@@ -59,10 +59,10 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
         setContentType(typeof ct === 'string' ? ct : 'application/octet-stream');
         setIsLoading(false);
       } catch (err: any) {
-        console.error('Failed to load document');
+        console.error('Failed to load document:', err);
         setError(err.response?.status === 404 
-          ? 'המסמך לא נמצא במערכת.'
-          : 'שגיאה בטעינת המסמך. נסה שוב מאוחר יותר.');
+          ? 'המסמך לא נמצא.'
+          : 'לא ניתן היה לטעון את המסמך. נסו שוב מאוחר יותר.');
         setIsLoading(false);
       }
     };
@@ -97,19 +97,19 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
     <div className="modal-overlay document-viewer-modal" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>צפייה במסמך - {documentId}</h3>
-          <button className="modal-close-btn" onClick={onClose}>×</button>
+          <h3>צפייה במסמך <bdi dir="ltr">{documentId}</bdi></h3>
+          <button className="modal-close-btn" onClick={onClose} aria-label="סגירה">×</button>
         </div>
 
         <div className="document-viewer-controls">
           <div>
-            <button onClick={handleZoomOut} disabled={zoom <= 50 || isLoading || !!error}>-</button>
-            <span style={{ margin: '0 1rem', fontWeight: 600 }}>{zoom}%</span>
-            <button onClick={handleZoomIn} disabled={zoom >= 200 || isLoading || !!error}>+</button>
-            <button onClick={handleZoomReset} style={{ marginRight: '1rem' }} disabled={isLoading || !!error}>איפוס</button>
+            <button onClick={handleZoomOut} disabled={zoom <= 50 || isLoading || !!error} aria-label="הקטנה" title="הקטנה">-</button>
+            <span style={{ margin: '0 1rem', fontWeight: 600 }}><bdi dir="ltr">{zoom}%</bdi></span>
+            <button onClick={handleZoomIn} disabled={zoom >= 200 || isLoading || !!error} aria-label="הגדלה" title="הגדלה">+</button>
+            <button onClick={handleZoomReset} style={{ marginRight: '1rem' }} disabled={isLoading || !!error}>איפוס זום</button>
           </div>
           <div style={{ color: '#666', fontSize: '0.9rem' }}>
-            {isPDF && `עמוד ${pageIndex + 1}`}
+            {isPDF && <>עמוד <bdi dir="ltr">{pageIndex + 1}</bdi></>}
             {isImage && 'תמונה'}
           </div>
         </div>
@@ -130,7 +130,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
                 animation: 'spin 1s linear infinite',
                 margin: '0 auto 1rem'
               }}></div>
-              <p>טוען מסמך...</p>
+              <p>טוען את המסמך…</p>
             </div>
           )}
           
@@ -143,7 +143,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
               borderRadius: '4px',
               margin: '1rem'
             }}>
-              <p><strong>שגיאה בטעינת המסמך</strong></p>
+              <p><strong>טעינת המסמך נכשלה</strong></p>
               <p>{error}</p>
             </div>
           )}
@@ -195,8 +195,8 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
               borderRadius: '4px',
               margin: '1rem'
             }}>
-              <p><strong>סוג קובץ לא נתמך להצגה</strong></p>
-              <p>Content-Type: {contentType}</p>
+              <p><strong>לא ניתן להציג סוג קובץ זה</strong></p>
+              <p>סוג הקובץ: <bdi dir="ltr">{contentType}</bdi></p>
             </div>
           )}
         </div>

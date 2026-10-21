@@ -11,6 +11,7 @@ import {
   EvidenceField, pendingCandidates, rejectedCandidates, visibleNotes, hasEvidence,
   isAmbiguousYearDate, reasonLabel,
 } from './utils/evidence';
+import './CommitmentReviewTable.css';
 
 interface FieldEvidenceProps {
   fieldName: string;
