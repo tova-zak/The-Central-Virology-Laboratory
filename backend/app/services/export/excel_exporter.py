@@ -19,6 +19,37 @@ from openpyxl.utils import get_column_letter
 from app.domain.models import TestRecord, CommitmentRecord
 
 
+def _effective_value(field_value):
+    """Effective value: first non-None of reviewed > normalized > raw."""
+    for value in (field_value.reviewed_value, field_value.normalized_value, field_value.raw_value):
+        if value is not None:
+            return value
+    return None
+
+
+def commitment_numbers_for_export(commitment: CommitmentRecord) -> List[str]:
+    """Commitment numbers to export for one record (one Excel row each).
+
+    The effective commitment number comes first, followed by every non-rejected
+    'multiple_commitments_on_page' candidate not already listed. Order is preserved
+    and duplicates removed. An empty effective value yields a single empty row.
+    """
+    field = commitment.commitment_number
+    effective = _effective_value(field)
+    if effective is None or (isinstance(effective, str) and not effective.strip()):
+        return [""]
+    numbers = [effective]
+    for candidate in field.candidates:
+        if (
+            candidate.reason == "multiple_commitments_on_page"
+            and candidate.status != "rejected"
+            and candidate.value
+            and candidate.value not in numbers
+        ):
+            numbers.append(candidate.value)
+    return numbers
+
+
 class ExcelExporter:
     """Export commitment data to Excel format."""
     
@@ -79,8 +110,9 @@ class ExcelExporter:
             cell.font = self.header_font
             cell.alignment = Alignment(horizontal="center", vertical="center")
         
-        # NEW: Iterate COMMITMENTS (one row per commitment number)
-        for row_idx, commitment in enumerate(commitment_records, start=2):
+        # One record per page; one Excel row per commitment number of that record.
+        row_idx = 2
+        for commitment in commitment_records:
             # Find the test record for this commitment
             test_record = next(
                 (r for r in test_records if commitment.commitment_record_id in r.commitment_ids),
@@ -110,20 +142,19 @@ class ExcelExporter:
                 received_date = self._get_value(commitment.received_date)
                 central_numbers = self._get_value(commitment.central_numbers)
 
-            # Get commitment number
-            commitment_num = self._get_value(commitment.commitment_number)
-            
             # Format list fields as comma-separated
             central_str = self._format_list(central_numbers)
             
-            # Write row - ONE COMMITMENT NUMBER PER ROW
-            ws.cell(row=row_idx, column=1, value=first_name)
-            ws.cell(row=row_idx, column=2, value=last_name)
-            ws.cell(row=row_idx, column=3, value=id_number)
-            ws.cell(row=row_idx, column=4, value=sender)
-            ws.cell(row=row_idx, column=5, value=received_date)
-            ws.cell(row=row_idx, column=6, value=central_str)
-            ws.cell(row=row_idx, column=7, value=commitment_num)  # Single value
+            # Write rows - ONE COMMITMENT NUMBER PER ROW (same patient/central cells on each row)
+            for commitment_num in commitment_numbers_for_export(commitment):
+                self._write_text(ws, row_idx, 1, first_name)
+                self._write_text(ws, row_idx, 2, last_name)
+                self._write_text(ws, row_idx, 3, id_number)
+                self._write_text(ws, row_idx, 4, sender)
+                self._write_text(ws, row_idx, 5, received_date)
+                self._write_text(ws, row_idx, 6, central_str)
+                self._write_text(ws, row_idx, 7, commitment_num)
+                row_idx += 1
         
         # Auto-adjust column widths
         for col_idx in range(1, len(headers) + 1):
@@ -133,6 +164,20 @@ class ExcelExporter:
         wb.save(output_path)
         return output_path
     
+    @staticmethod
+    def _write_text(ws, row: int, col: int, value) -> None:
+        """Write a value so Excel never interprets it as a formula.
+
+        Strings are stored verbatim with data_type 's' (no prefix, leading zeros kept).
+        Empty values become real empty cells.
+        """
+        if value is None or value == "":
+            ws.cell(row=row, column=col)
+            return
+        cell = ws.cell(row=row, column=col, value=value)
+        if isinstance(value, str):
+            cell.data_type = 's'
+
     def _get_value(self, field_value):
         """Extract value from FieldValue with priority: reviewed > normalized > raw."""
         if hasattr(field_value, 'reviewed_value'):

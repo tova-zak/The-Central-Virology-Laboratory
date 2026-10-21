@@ -99,10 +99,20 @@ class TestHospitals:
         assert "רמב" in canonical
         assert confident is True
     
-    def test_hadassah(self, normalizer):
-        """Test Hadassah."""
+    def test_hadassah_alone_is_ambiguous(self, normalizer):
+        """'הדסה' alone is ambiguous between two campuses -> never auto-mapped."""
         canonical, confident, warning = normalizer.normalize("הדסה")
-        assert "הדסה" in canonical
+        assert canonical is None
+        assert confident is False
+        assert "ambiguous" in warning.lower()
+    
+    def test_hadassah_campuses(self, normalizer):
+        """Each Hadassah campus resolves to its own canonical name."""
+        canonical, confident, _ = normalizer.normalize("הדסה עין כרם")
+        assert canonical == "המרכז הרפואי הדסה עין כרם"
+        assert confident is True
+        canonical, confident, _ = normalizer.normalize("הדסה הר הצופים")
+        assert canonical == "המרכז הרפואי הדסה הר הצופים"
         assert confident is True
     
     def test_schneider(self, normalizer):
@@ -197,6 +207,116 @@ class TestMixedContent:
         canonical, confident, warning = normalizer.normalize("המעבדה המרכזית לוירולוגיה")
         assert canonical is None
         assert confident is False
+
+
+class TestStrictMatching:
+    """No substring / city-based matching; exact alias (optionally minus one generic prefix)."""
+    
+    @pytest.mark.parametrize("raw", [
+        "מרפאת מאיר",
+        "פתח תקווה",
+        "נתניה",
+        "הרצליה",
+        "רחובות",
+        "באר שבע",
+        "מכבי שירותי בריאות",
+        "בית חולים אלמוני",
+    ])
+    def test_not_silently_mapped(self, normalizer, raw):
+        canonical, confident, warning = normalizer.normalize(raw)
+        assert canonical is None
+        assert confident is False
+        assert warning
+    
+    def test_unknown_warning_mentions_not_found(self, normalizer):
+        _, _, warning = normalizer.normalize("מרפאת מאיר")
+        assert "not found" in warning.lower()
+    
+    def test_hospital_prefix_stripped(self, normalizer):
+        canonical, confident, warning = normalizer.normalize("בית חולים שיבא")
+        assert canonical == "המרכז הרפואי שיבא (תל השומר)"
+        assert confident is True
+        assert warning is None
+    
+    def test_health_fund_prefix_stripped(self, normalizer):
+        canonical, confident, _ = normalizer.normalize("קופת חולים מאוחדת")
+        assert canonical == "מאוחדת"
+        assert confident is True
+    
+    def test_abbreviated_prefix_stripped(self, normalizer):
+        canonical, confident, _ = normalizer.normalize('ביה"ח שיבא')
+        assert canonical == "המרכז הרפואי שיבא (תל השומר)"
+        assert confident is True
+    
+    def test_prefix_does_not_resolve_ambiguous(self, normalizer):
+        canonical, confident, warning = normalizer.normalize("בית חולים הדסה")
+        assert canonical is None
+        assert confident is False
+        assert "ambiguous" in warning.lower()
+    
+    def test_assuta_variants(self, normalizer):
+        canonical, confident, _ = normalizer.normalize("בית חולים אסותא אשדוד")
+        assert canonical == "המרכז הרפואי אסותא אשדוד"
+        assert confident is True
+        canonical, confident, _ = normalizer.normalize("אסותא")
+        assert canonical == "המרכז הרפואי אסותא"
+        assert confident is True
+    
+    def test_hyphen_and_maqaf_normalized(self, normalizer):
+        for raw in ("תל-השומר", "תל־השומר", "תל השומר"):
+            canonical, confident, _ = normalizer.normalize(raw)
+            assert canonical == "המרכז הרפואי שיבא (תל השומר)", raw
+            assert confident is True
+    
+    @pytest.mark.parametrize("raw,expected", [
+        ("אסף הרופא", "המרכז הרפואי שמיר (אסף הרופא)"),
+        ("תל השומר", "המרכז הרפואי שיבא (תל השומר)"),
+        ("איכילוב", "המרכז הרפואי תל אביב (איכילוב)"),
+        ("סוראסקי", "המרכז הרפואי תל אביב (איכילוב)"),
+        ("בילינסון", "המרכז הרפואי רבין"),
+        ("בני ציון", "המרכז הרפואי בני ציון"),
+        ("מ.ר. בני-ציון", "המרכז הרפואי בני ציון"),
+        ("רמבם", 'המרכז הרפואי רמב"ם'),
+        ("שניידר", "בית חולים שניידר לילדים"),
+        ("קפלן", "המרכז הרפואי קפלן"),
+        ("סורוקה", "המרכז הרפואי סורוקה"),
+        ("ספיר", "בית חולים מאיר"),
+    ])
+    def test_hospital_specific_aliases_still_resolve(self, normalizer, raw, expected):
+        canonical, confident, warning = normalizer.normalize(raw)
+        assert canonical == expected
+        assert confident is True
+        assert warning is None
+
+
+class TestAliasIntegrity:
+    """Data integrity of sending_institutions.json."""
+    
+    def test_only_hadassah_is_ambiguous(self, normalizer):
+        """Every alias maps to exactly one canonical name, except deliberately ambiguous 'הדסה'."""
+        assert set(normalizer.ambiguous_aliases) == {"הדסה"}
+    
+    def test_non_ambiguous_aliases_map_to_known_canonical(self, normalizer):
+        names = set(normalizer.get_all_canonical_names())
+        for alias, canonical in normalizer.alias_to_canonical.items():
+            assert canonical in names, alias
+            if alias not in normalizer.ambiguous_aliases:
+                assert normalizer.normalize(alias)[0] == canonical, alias
+    
+    def test_ambiguity_detected_for_custom_data(self, tmp_path):
+        import json
+        data = {
+            "health_funds": [],
+            "hospitals": [
+                {"canonical_name": "A", "aliases": ["x"], "type": "general_hospital"},
+                {"canonical_name": "B", "aliases": ["x"], "type": "general_hospital"},
+            ],
+        }
+        f = tmp_path / "inst.json"
+        f.write_text(json.dumps(data), encoding="utf-8")
+        n = SenderNormalizer(f)
+        assert n.normalize("x")[0] is None
+        assert "ambiguous" in n.normalize("x")[2].lower()
 
 
 class TestNormalizerStats:

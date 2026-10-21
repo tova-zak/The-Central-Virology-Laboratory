@@ -304,6 +304,13 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
                 detail="Enter a complete valid date with a four-digit year (for example 15/03/2024)"
             )
         new_value = assessment.normalized or new_value
+    if field_name == "commitment_number":
+        # A correction replaces the misread number: its stand-in candidate must not be exported too.
+        previous_raw = field.get("raw_value")
+        if previous_raw is not None and new_value != previous_raw:
+            for candidate in field.get("candidates") or []:
+                if candidate.get("value") == previous_raw:
+                    candidate["status"] = "rejected"
     field["reviewed_value"] = new_value
     field["review_state"] = "human_verified"
     
@@ -871,6 +878,12 @@ def _check_export_eligibility(records: list[TestRecord], commitment_records: lis
     return (len(blockers) == 0, blockers)
 
 
+# Fields a reviewer may confirm as empty (patient_id_number and central_numbers may not).
+CONFIRMABLE_EMPTY_FIELDS = (
+    "patient_first_name", "patient_last_name", "sender", "received_date", "commitment_number",
+)
+
+
 def _check_export_eligibility_commitments(commitment_records: list) -> tuple[bool, list[str]]:
     """Check if commitment records can be exported (one-page-one-commitment model).
     
@@ -898,6 +911,14 @@ def _check_export_eligibility_commitments(commitment_records: list) -> tuple[boo
             value = next((field[key] for key in ("reviewed_value", "normalized_value", "raw_value")
                           if field.get(key) is not None), None)
             empty = value is None or (isinstance(value, str) and not value.strip()) or value == []
+            # A reviewer-confirmed empty value is allowed, except for the fields policy requires.
+            confirmed_empty = (
+                empty
+                and field.get("review_state") == "human_verified"
+                and field_name in CONFIRMABLE_EMPTY_FIELDS
+            )
+            if confirmed_empty:
+                continue
             if empty or (isinstance(value, list) and any(not str(v or "").strip() for v in value)):
                 blockers.append(f"{commitment_id}: {field_name}_missing")
             elif field.get("review_state") != "human_verified":

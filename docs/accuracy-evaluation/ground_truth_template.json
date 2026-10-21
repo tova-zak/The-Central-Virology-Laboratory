@@ -1,0 +1,233 @@
+{
+  "_comment": "Ground-truth template (synthetic placeholders only). Fill each form by hand from the sample PDFs and set manually_tagged to true when done. null or [] means the field is absent on the form. Date format is DD/MM/YYYY. IDs and numbers are strings (keep leading zeros). Never commit real patient data.",
+  "forms": [
+    {
+      "form_id": "form_001",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 0,
+      "set": "dev",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_01",
+      "patient_last_name": "LAST_01",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100001"
+      ],
+      "commitment_numbers": [
+        "200001"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_002",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 1,
+      "set": "dev",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_02",
+      "patient_last_name": "LAST_02",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100002"
+      ],
+      "commitment_numbers": [
+        "200002"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_003",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 2,
+      "set": "dev",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_03",
+      "patient_last_name": "LAST_03",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100003"
+      ],
+      "commitment_numbers": [
+        "200003"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_004",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 3,
+      "set": "dev",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_04",
+      "patient_last_name": "LAST_04",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100004"
+      ],
+      "commitment_numbers": [
+        "200004"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_005",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 4,
+      "set": "dev",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_05",
+      "patient_last_name": "LAST_05",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100005"
+      ],
+      "commitment_numbers": [
+        "200005"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_006",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 5,
+      "set": "dev",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_06",
+      "patient_last_name": "LAST_06",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100006"
+      ],
+      "commitment_numbers": [
+        "200006"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_007",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 6,
+      "set": "eval",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_07",
+      "patient_last_name": "LAST_07",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100007"
+      ],
+      "commitment_numbers": [
+        "200007"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_008",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 7,
+      "set": "eval",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_08",
+      "patient_last_name": "LAST_08",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100008"
+      ],
+      "commitment_numbers": [
+        "200008"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_009",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 8,
+      "set": "eval",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_09",
+      "patient_last_name": "LAST_09",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100009"
+      ],
+      "commitment_numbers": [
+        "200009"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_010",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 9,
+      "set": "eval",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_10",
+      "patient_last_name": "LAST_10",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100010"
+      ],
+      "commitment_numbers": [
+        "200010"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_011",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 10,
+      "set": "eval",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_11",
+      "patient_last_name": "LAST_11",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100011"
+      ],
+      "commitment_numbers": [
+        "200011"
+      ],
+      "notes": ""
+    },
+    {
+      "form_id": "form_012",
+      "source_file": "SAMPLE_FILE_NAME.pdf",
+      "page_index": 11,
+      "set": "eval",
+      "manually_tagged": false,
+      "patient_first_name": "FIRST_12",
+      "patient_last_name": "LAST_12",
+      "patient_id_number": "000000018",
+      "sender": "SENDER_PLACEHOLDER",
+      "received_date": "01/01/2026",
+      "central_numbers": [
+        "100012"
+      ],
+      "commitment_numbers": [
+        "200012"
+      ],
+      "notes": ""
+    }
+  ]
+}
