@@ -12,7 +12,9 @@ import { ReviewScreenNew } from '../review/ReviewScreenNew';
 import { processBatch, getBatchStatus, retryFailedPages } from '../../services/api';
 import type { BatchStatusResponse, ProcessingProgress } from '../../services/api';
 import { decidePoll, POLL_INTERVAL_MS } from './pollingPolicy';
+import { getErrorMessage, localizeProcessingMessage } from '../../utils/hebrewMessages';
 import './WorkflowScreen.css';
+import './WorkflowStages.css';
 
 type WorkflowStage = 'upload' | 'processing' | 'review';
 
@@ -75,10 +77,10 @@ export const WorkflowScreen: React.FC = () => {
           startPolling(batchId);
         } else if (batchStatus.status === 'failed') {
           setStage('review'); // Show errors in review
-          setProcessingError('Processing failed. Check details below.');
+          setProcessingError('העיבוד נכשל. פרטי השגיאות מוצגים במסך הבדיקה.');
         } else if (batchStatus.status === 'quota_exhausted') {
           setStage('review');
-          setProcessingError('Gemini quota exhausted. Check extraction errors and provider cooldown.');
+          setProcessingError('מכסת השימוש בשירות Gemini מוצתה. בדקו את שגיאות החילוץ ונסו שוב מאוחר יותר.');
         } else {
           // uploaded but not processed yet
           setStage('upload');
@@ -144,7 +146,8 @@ export const WorkflowScreen: React.FC = () => {
         }, 500);
       } else if (decision.action === 'fail') {
         stop();
-        setProcessingError(decision.message);
+        console.warn('Processing stopped:', decision.message);
+        setProcessingError(localizeProcessingMessage(decision.message, 'העיבוד לא הושלם. נסו שוב או העלו את המסמכים מחדש.'));
         if (decision.goToReview) {
           // The review screen lists the persisted extraction errors per page.
           setStage('review');
@@ -187,7 +190,7 @@ export const WorkflowScreen: React.FC = () => {
       
     } catch (err: any) {
       console.error('Processing failed to start:', err);
-      setProcessingError(err.response?.data?.detail || 'Failed to start processing');
+      setProcessingError(getErrorMessage(err, 'startProcessing'));
       setProcessing(false);
     }
   };
@@ -197,7 +200,8 @@ export const WorkflowScreen: React.FC = () => {
     try {
       await retryFailedPages(currentBatchId);
     } catch (err: any) {
-      window.alert(err.response?.data?.detail || 'Retry could not be started');
+      console.error('Retry could not be started:', err);
+      window.alert(getErrorMessage(err, 'retryFailed'));
       return;
     }
     setProcessing(true);
@@ -235,8 +239,8 @@ export const WorkflowScreen: React.FC = () => {
   if (loading) {
     return (
       <div className="workflow-screen loading-state">
-        <div className="spinner"></div>
-        <p>טוען מצב קודם...</p>
+        <img className="loading-gif" src="/loading.gif" alt="" />
+        <p role="status">טוען את מצב העבודה הקודם…</p>
       </div>
     );
   }
@@ -247,38 +251,38 @@ export const WorkflowScreen: React.FC = () => {
       <div className="stage-indicator">
         <div className={`stage-item ${stage === 'upload' ? 'active' : stage === 'processing' || stage === 'review' ? 'completed' : ''}`}>
           <span className="stage-number">1</span>
-          <span className="stage-label">Upload</span>
+          <span className="stage-label">העלאה</span>
         </div>
         <div className="stage-connector"></div>
         <div className={`stage-item ${stage === 'processing' ? 'active' : stage === 'review' ? 'completed' : ''}`}>
           <span className="stage-number">2</span>
-          <span className="stage-label">Process</span>
+          <span className="stage-label">עיבוד</span>
         </div>
         <div className="stage-connector"></div>
         <div className={`stage-item ${stage === 'review' ? 'active' : ''}`}>
           <span className="stage-number">3</span>
-          <span className="stage-label">Review & Export</span>
+          <span className="stage-label">בדיקה וייצוא</span>
         </div>
       </div>
 
       {/* Upload Stage */}
       {stage === 'upload' && (
         <div className="stage-content">
-          <h2>Upload Documents</h2>
+          <h2>העלאת מסמכים</h2>
           <UploadForm onUploadSuccess={handleUploadSuccess} />
           
           {currentBatchId && (
             <div className="post-upload-actions">
               <div className="batch-info-box">
-                <p><strong>Batch Created:</strong> {currentBatchId}</p>
-                <p className="hint">Files are uploaded. Click "Start Processing" to extract data.</p>
+                <p><strong>נוצרה קבוצת מסמכים:</strong> <bdi dir="ltr">{currentBatchId}</bdi></p>
+                <p className="hint">הקבצים הועלו. לחצו על „התחלת עיבוד” כדי להתחיל בחילוץ הנתונים.</p>
               </div>
               <button 
                 className="button-primary button-large"
                 onClick={handleStartProcessing}
                 disabled={processing}
               >
-                {processing ? 'Processing...' : 'Start Processing with AI'}
+                {processing ? 'העיבוד מתבצע…' : 'התחלת עיבוד'}
               </button>
             </div>
           )}
@@ -288,23 +292,23 @@ export const WorkflowScreen: React.FC = () => {
       {/* Processing Stage */}
       {stage === 'processing' && (
         <div className="stage-content">
-          <h2>Processing Documents</h2>
+          <h2>עיבוד המסמכים</h2>
           <div className="processing-indicator">
-            <div className="spinner"></div>
-            <p>Extracting data with Gemini AI...</p>
+            <img className="loading-gif" src="/loading.gif" alt="" />
+            <p role="status">העיבוד מתבצע: הנתונים מחולצים מהמסמכים בעזרת בינה מלאכותית (Gemini).</p>
             
             {progress && progress.total > 0 && (
               <div className="progress-details">
                 <p className="progress-text">
-                  Processing file {progress.current} of {progress.total}
+                  מעבד קובץ <bdi dir="ltr">{progress.current}</bdi> מתוך <bdi dir="ltr">{progress.total}</bdi>
                 </p>
                 {progress.current_file && (
-                  <p className="current-file">{progress.current_file}</p>
+                  <p className="current-file"><bdi dir="ltr">{progress.current_file}</bdi></p>
                 )}
                 {!!progress.page_total && (
                   <p className="progress-text">
-                    Page {progress.page_current ?? 0} of {progress.page_total}
-                    {!!progress.pages_failed && ` - ${progress.pages_failed} failed${progress.last_error_code ? ` (${progress.last_error_code})` : ''}`}
+                    עמוד <bdi dir="ltr">{progress.page_current ?? 0}</bdi> מתוך <bdi dir="ltr">{progress.page_total}</bdi>
+                    {!!progress.pages_failed && <> – <bdi dir="ltr">{progress.pages_failed}</bdi> נכשלו{progress.last_error_code ? <> (<bdi dir="ltr">{progress.last_error_code}</bdi>)</> : null}</>}
                   </p>
                 )}
                 <div className="progress-bar">
@@ -316,14 +320,14 @@ export const WorkflowScreen: React.FC = () => {
               </div>
             )}
             
-            <p className="hint">This process runs in the background. You can safely close this tab and return later.</p>
+            <p className="hint">העיבוד נמשך ברקע בשרת. אם תסגרו את הדף, בחזרה אליו באותו דפדפן יוצג המצב העדכני של קבוצת המסמכים.</p>
           </div>
           
           {processingError && (
             <div className="error-box">
-              <h3>Processing Error</h3>
+              <h3>העיבוד לא הושלם</h3>
               <p>{processingError}</p>
-              <button onClick={handleBackToUpload}>Back to Upload</button>
+              <button onClick={handleBackToUpload}>חזרה להעלאת מסמכים</button>
             </div>
           )}
         </div>
@@ -336,9 +340,9 @@ export const WorkflowScreen: React.FC = () => {
             <button 
               className="button-secondary"
               onClick={handleNewBatch}
-              title="התחל אצווה חדשה"
+              title="התחלת קבוצת מסמכים חדשה"
             >
-              📤 אצווה חדשה
+              <span aria-hidden="true">📤</span> קבוצת מסמכים חדשה
             </button>
           </div>
           <ReviewScreenNew 

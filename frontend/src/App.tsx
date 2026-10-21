@@ -3,6 +3,7 @@ import './App.css'
 import { healthCheck, HealthResponse, apiClient } from './services/api'
 import { WorkflowScreen } from './features/workflow/WorkflowScreen'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { getHealthStatusLabel, AUTH_TEXT } from './utils/hebrewMessages'
 
 function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -31,7 +32,7 @@ function App() {
       setLoginError('')
     } catch {
       delete apiClient.defaults.auth
-      setLoginError('Sign-in failed. Check credentials and connection.')
+      setLoginError(AUTH_TEXT.failed)
     } finally {
       setSigningIn(false)
     }
@@ -44,7 +45,7 @@ function App() {
         setHealth(data)
         setError(null)
       } catch (err) {
-        setError('Failed to connect to Backend')
+        setError('לא ניתן להתחבר לשרת.')
         console.error('Health check failed:', err)
       } finally {
         setLoading(false)
@@ -60,24 +61,10 @@ function App() {
         {/* Tzalul Header */}
         <header className="tzalul-header">
           <div className="tzalul-header-brand">
+            <img className="tzalul-logo" src="/logo.png" alt="" />
             <div className="tzalul-header-text">
               <h1 className="tzalul-header-title">המעבדה המרכזית לנגיפים</h1>
               <p className="tzalul-header-subtitle">סביבת בדיקת נתונים · צלול</p>
-            </div>
-            {/* Logo placeholder - will be added when logo file is provided */}
-            <div className="tzalul-logo-placeholder" style={{
-              width: '48px',
-              height: '48px',
-              background: 'var(--primary)',
-              borderRadius: 'var(--radius-sm)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'white',
-              fontWeight: 'bold',
-              fontSize: '24px'
-            }}>
-              צ
             </div>
           </div>
         </header>
@@ -86,14 +73,14 @@ function App() {
         <main className="app-main">
           {loading && (
             <div className="status-box loading-box">
-              <p>בודק חיבור למערכת...</p>
+              <p role="status">בודק חיבור לשרת…</p>
             </div>
           )}
           
           {error && (
-            <div className="status-box error-box">
-              <strong>⚠ שגיאת חיבור:</strong> {error}
-              <p className="hint">ודא שהשרת פועל על פורט 8000</p>
+            <div className="status-box error-box" role="alert">
+              <strong><span aria-hidden="true">⚠</span> שגיאת חיבור:</strong> {error}
+              <p className="hint">בדקו שהשרת פועל ורעננו את הדף.</p>
             </div>
           )}
           
@@ -101,29 +88,28 @@ function App() {
             <>
               <div className="status-box success-box">
                 <div className="status-content">
-                  <h3>✓ המערכת פעילה</h3>
+                  <h3><span aria-hidden="true">✓</span> המערכת פעילה</h3>
                   <div className="status-details">
-                    <span><strong>שירות:</strong> {health.service}</span>
-                    <span><strong>גרסה:</strong> {health.version}</span>
-                    <span><strong>מודל AI:</strong> {health.model}</span>
-                    <span><strong>סטטוס:</strong> {health.status}</span>
+                    <span><strong>שירות:</strong> <bdi dir="ltr">{health.service}</bdi></span>
+                    <span><strong>גרסה:</strong> <bdi dir="ltr">{health.version}</bdi></span>
+                    <span><strong>מודל בינה מלאכותית:</strong> <bdi dir="ltr">{health.model}</bdi></span>
+                    <span><strong>מצב השרת:</strong> {getHealthStatusLabel(health.status)}</span>
                   </div>
                 </div>
               </div>
 
-              {health.demo_mode && <p role="status">DEMO MODE — synthetic extraction only. Upload synthetic documents only.</p>}
-              {health.environment === 'staging-real' && <p role="status">
-                RESTRICTED STAGING — real Gemini extraction. Only synthetic or institutionally approved
-                non-sensitive documents. Clinical data is prohibited.
+              {health.demo_mode && <p role="status" className="env-banner env-banner-demo">{AUTH_TEXT.demoBanner}</p>}
+              {health.environment === 'staging-real' && <p role="status" className="env-banner env-banner-staging">
+                {AUTH_TEXT.stagingBanner}
               </p>}
               {health.requires_auth && !authenticated ? (
-                <form onSubmit={signIn}>
-                  <label>Username <input autoComplete="username" value={username}
+                <form onSubmit={signIn} className="auth-form">
+                  <label className="auth-field">{AUTH_TEXT.username} <input dir="ltr" autoComplete="username" value={username}
                     onChange={event => setUsername(event.target.value)} required /></label>
-                  <label>Password <input type="password" autoComplete="current-password" value={password}
+                  <label className="auth-field">{AUTH_TEXT.password} <input dir="ltr" type="password" autoComplete="current-password" value={password}
                     onChange={event => setPassword(event.target.value)} required /></label>
-                  <button type="submit" disabled={signingIn}>{signingIn ? 'Signing in...' : 'Sign in'}</button>
-                  {loginError && <p role="alert">{loginError}</p>}
+                  <button type="submit" className="auth-submit" disabled={signingIn}>{signingIn ? AUTH_TEXT.submitting : AUTH_TEXT.submit}</button>
+                  {loginError && <p role="alert" className="auth-error">{loginError}</p>}
                 </form>
               ) : <WorkflowScreen />}
             </>

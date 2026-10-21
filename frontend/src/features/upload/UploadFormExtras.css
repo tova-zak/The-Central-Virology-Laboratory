@@ -1,0 +1,105 @@
+/**
+ * Upload form - basic layout, alerts and hint - Tzalul Theme
+ * Covers the classes UploadForm.tsx renders that UploadForm.css has no rule for.
+ */
+
+.upload-form {
+  max-width: 100%;
+}
+
+.upload-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.upload-form .form-group label {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  line-height: var(--leading-normal);
+}
+
+.upload-form input[type='file'] {
+  max-width: 100%;
+  padding: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-sm);
+  color: var(--text-primary);
+}
+
+.upload-form input[type='file']:focus-visible,
+.upload-form button:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.upload-form .file-info {
+  margin: 0;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.upload-form button[type='submit'] {
+  min-height: var(--button-height);
+  padding: var(--space-2) var(--space-8);
+  background: var(--primary);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.upload-form button[type='submit']:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.upload-form button[type='submit']:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.alert-error {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+.alert-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+@media (max-width: 768px) {
+  .upload-form button[type='submit'] {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+}

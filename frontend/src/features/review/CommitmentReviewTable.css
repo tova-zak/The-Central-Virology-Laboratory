@@ -1,0 +1,409 @@
+/**
+ * CommitmentReviewTable + FieldEvidence styles - Tzalul Theme
+ * Per-page commitment review table and the evidence (candidates / notes) shown inside each cell.
+ * Tokens only (styles/variables.css). RTL-first: logical properties are used so the layout mirrors correctly.
+ * Page-level overflow is avoided: only .table-wrapper scrolls horizontally.
+ */
+
+/* ===== Table container ===== */
+.commitment-review-table-section {
+  margin-bottom: var(--space-8);
+}
+
+.commitment-review-table-section > h2 {
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.commitment-review-table-section .table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+.commitment-review-table {
+  min-width: 1100px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+}
+
+.commitment-review-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: bottom;
+}
+
+.commitment-review-table td {
+  vertical-align: top;
+  min-width: 11rem;
+  max-width: 20rem;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border-light);
+  border-inline-start: 1px solid var(--border-light);
+  text-align: start;
+}
+
+/* First column (page / source) stays visible while scrolling horizontally */
+.commitment-review-table th:first-child,
+.commitment-review-table td:first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 2;
+  min-width: 9rem;
+  background: var(--surface);
+  border-inline-end: 1px solid var(--border);
+}
+
+.commitment-review-table th:first-child {
+  z-index: 3;
+  background: var(--bg-hover);
+}
+
+.commitment-review-table tbody tr:hover td:first-child {
+  background: var(--bg-hover);
+}
+
+.commitment-review-table .page-id {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+/* ===== Cell states ===== */
+.cell-verified {
+  background: var(--success-bg);
+  box-shadow: inset 3px 0 0 var(--success-border);
+}
+
+.cell-review {
+  background: var(--warning-bg);
+  box-shadow: inset 3px 0 0 var(--warning-border);
+}
+
+.cell-value {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  unicode-bidi: plaintext;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.cell-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  margin-inline-end: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.cell-state.state-approved {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border-color: var(--success-border);
+}
+
+.cell-state.state-approved::before {
+  content: '✓';
+}
+
+.cell-state.state-review {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border-color: var(--warning-border);
+}
+
+.cell-state.state-review::before {
+  content: '!';
+  font-weight: var(--weight-bold);
+}
+
+/* ===== Buttons directly inside cells (edit / approve / view source) ===== */
+.commitment-review-table td > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--input-height);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.commitment-review-table td > button:hover:not(:disabled) {
+  background: var(--selected-bg);
+  border-color: var(--primary-hover);
+  color: var(--primary-hover);
+}
+
+.commitment-review-table td > button:active:not(:disabled) {
+  background: var(--primary);
+  color: var(--text-inverse);
+}
+
+.commitment-review-table td > button:disabled {
+  color: var(--text-disabled);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+.commitment-review-table td:first-child > button {
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+.commitment-review-table button:focus-visible,
+.field-evidence summary:focus-visible,
+.page-warnings summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ===== Page warnings ===== */
+.page-warnings {
+  margin-top: var(--space-2);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  color: var(--warning-text);
+}
+
+.page-warnings summary {
+  padding: var(--space-2);
+  cursor: pointer;
+  font-weight: var(--weight-semibold);
+  list-style-position: inside;
+}
+
+.page-warnings ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.page-warnings li {
+  overflow-wrap: anywhere;
+  line-height: var(--leading-normal);
+}
+
+/* ===== FieldEvidence ===== */
+.field-evidence {
+  margin-top: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+}
+
+.field-evidence > summary {
+  padding: var(--space-2);
+  cursor: pointer;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  list-style-position: inside;
+}
+
+.field-evidence[open] > summary {
+  border-bottom: 1px solid var(--border-light);
+}
+
+.field-evidence > :not(summary) {
+  margin: var(--space-2);
+}
+
+.evidence-ambiguous-date {
+  padding: var(--space-2);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-sm);
+  color: var(--error-text);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-normal);
+}
+
+.evidence-candidates,
+.evidence-notes {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.evidence-candidate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+.evidence-value {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  background: var(--selected-bg);
+  color: var(--primary-hover);
+  border-radius: var(--radius-sm);
+  font-weight: var(--weight-semibold);
+  direction: ltr;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+
+.evidence-ambiguous-date .evidence-value {
+  background: var(--surface);
+  color: var(--error-text);
+}
+
+.evidence-reason,
+.evidence-source {
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+
+.evidence-source {
+  color: var(--text-tertiary);
+}
+
+.evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
+
+.evidence-btn {
+  min-height: var(--input-height);
+  padding: var(--space-1) var(--space-3);
+  background: var(--primary);
+  color: var(--text-inverse);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.evidence-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.evidence-btn.evidence-btn-secondary {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+.evidence-btn.evidence-btn-secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.evidence-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.evidence-notes li {
+  padding-inline-start: var(--space-3);
+  position: relative;
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.evidence-notes li::before {
+  content: '•';
+  position: absolute;
+  inset-inline-start: 0;
+  color: var(--text-tertiary);
+}
+
+.evidence-rejected {
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 768px) {
+  .commitment-review-table {
+    min-width: 900px;
+  }
+
+  .commitment-review-table-section > h2 {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--font-base);
+  }
+
+  .commitment-review-table td > button {
+    min-height: 2.75rem;
+  }
+
+  .evidence-btn {
+    min-height: 2.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .commitment-review-table td,
+  .commitment-review-table th {
+    font-size: var(--font-sm);
+  }
+
+  .evidence-candidate {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .evidence-actions {
+    flex-direction: column;
+    margin-inline-start: 0;
+  }
+
+  .evidence-actions .evidence-btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commitment-review-table td > button,
+  .evidence-btn {
+    transition: none;
+  }
+}

@@ -258,10 +258,23 @@
   border-color: var(--text-secondary);
 }
 
+/* Loading GIF (shown inside the existing loading areas) */
+.loading-gif {
+  display: block;
+  width: 160px;
+  max-width: 60%;
+  height: auto;
+  margin: 0 auto var(--space-4);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .workflow-screen {
     padding: var(--space-4);
+  }
+
+  .loading-gif {
+    width: 120px;
   }
 
   .workflow-steps {

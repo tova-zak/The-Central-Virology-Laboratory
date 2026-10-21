@@ -4,9 +4,20 @@
 
 .app {
   min-height: 100vh;
-  background: var(--bg);
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
+}
+
+/* Page background image: fixed layer behind all content, covers without distortion */
+.app::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg) url("/background.png") center / cover no-repeat;
+  pointer-events: none;
 }
 
 /* Tzalul Header */
@@ -27,8 +38,10 @@
 }
 
 .tzalul-logo {
-  height: 48px;
+  height: 56px;
   width: auto;
+  max-width: 100%;
+  flex-shrink: 0;
   object-fit: contain;
 }
 
@@ -123,6 +136,103 @@
   margin-top: var(--space-2);
 }
 
+/* Environment banners (demo / restricted staging) */
+.env-banner {
+  max-width: 800px;
+  margin: var(--space-4) auto;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-normal);
+  text-align: center;
+  direction: rtl;
+}
+
+.env-banner-staging {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+/* Sign-in form */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 420px;
+  margin: var(--space-8) auto;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  direction: rtl;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.auth-field input {
+  min-height: var(--input-height);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-base);
+  text-align: start;
+}
+
+.auth-field input:focus-visible,
+.auth-submit:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.auth-submit {
+  min-height: var(--button-height);
+  padding: var(--space-2) var(--space-6);
+  background: var(--primary);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.auth-submit:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.auth-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-sm);
+  color: var(--error-text);
+  font-size: var(--font-sm);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .tzalul-header {
@@ -130,7 +240,7 @@
   }
 
   .tzalul-logo {
-    height: 36px;
+    height: 40px;
   }
 
   .tzalul-header-title {

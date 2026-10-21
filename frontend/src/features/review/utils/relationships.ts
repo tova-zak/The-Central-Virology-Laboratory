@@ -43,7 +43,7 @@ export function getCommitmentNumbersForTest(
       // Missing commitment - data integrity issue
       console.warn(`Commitment ${commitmentId} referenced by test ${testRecord.test_id} but not found`);
       hasOverallWarning = true;
-      overallWarningMessage = 'התחייבות חסרה';
+      overallWarningMessage = 'התחייבות שלא נמצאה בנתונים';
       continue;
     }
     

@@ -6,6 +6,7 @@ import React from 'react';
 import { CommitmentRecord } from '../../services/api';
 import { getFieldLabel } from './utils/editPermissions';
 import { FieldEvidence } from './FieldEvidence';
+import './CommitmentReviewTable.css';
 import { canApproveAsIs, isHumanVerified, visiblePageWarnings } from './utils/evidence';
 
 export const REVIEW_FIELDS = [
@@ -25,8 +26,9 @@ interface CommitmentReviewTableProps {
 const USE_CANDIDATE_HINT = 'הערך המוצע טרם אושר. ערוך אותו לפי הצורך ושמור כדי לאשר.';
 
 export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ records, onEdit, onRejectCandidate, onViewSource }) => (
-  <section className="table-section">
+  <section className="table-section commitment-review-table-section">
     <h2>בדיקת התחייבויות לפי עמוד</h2>
+    <div className="table-wrapper">
     <table className="review-table commitment-review-table" dir="rtl">
       <thead>
         <tr>
@@ -40,7 +42,7 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
           return (
             <tr key={record.commitment_record_id}>
               <td>
-                {record.form_id}
+<bdi dir="ltr" className="page-id">{record.form_id}</bdi>
                 <button type="button" onClick={() => onViewSource(record)}>צפה במקור</button>
                 {warnings.length > 0 && (
                   <details className="page-warnings">
@@ -57,7 +59,7 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
                 const approvable = canApproveAsIs(name, field);
                 return (
                   <td key={name} className={verified ? 'cell-verified' : 'cell-review'}>
-                    <span className="cell-value">{Array.isArray(value) ? value.join(', ') : value || '-'}</span>
+                    <span className="cell-value" dir="auto">{Array.isArray(value) ? value.join(', ') : value || '-'}</span>
                     <span className={verified ? 'cell-state state-approved' : 'cell-state state-review'}>
                       {verified ? 'מאושר' : 'דורש בדיקה'}
                     </span>
@@ -78,5 +80,6 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
         })}
       </tbody>
     </table>
+    </div>
   </section>
 );

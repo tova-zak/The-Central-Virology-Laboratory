@@ -119,5 +119,5 @@ export function getFieldLabel(fieldName: string): string {
     commitment_number: 'מספר התחייבות'
   };
   
-  return labels[fieldName] || fieldName;
+  return labels[fieldName] || 'שדה';
 }

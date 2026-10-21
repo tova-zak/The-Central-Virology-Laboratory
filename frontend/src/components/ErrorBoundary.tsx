@@ -54,20 +54,20 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="error-boundary">
           <div className="error-content">
-            <h1>😕 Something Went Wrong</h1>
+            <h1><span aria-hidden="true">😕</span> משהו השתבש</h1>
             <p className="error-message">
-              The application encountered an unexpected error.
+              אירעה שגיאה לא צפויה באפליקציה.
             </p>
             
             {this.state.error && (
               <details className="error-details">
-                <summary>Error Details (for debugging)</summary>
-                <pre className="error-stack">
-                  <strong>Error:</strong> {this.state.error.toString()}
+                <summary>פרטי השגיאה (לצורכי תמיכה)</summary>
+                <pre className="error-stack" dir="ltr">
+                  <strong>שגיאה:</strong> {this.state.error.toString()}
                   {this.state.errorInfo && (
                     <>
                       <br /><br />
-                      <strong>Component Stack:</strong>
+                      <strong>מיקום ברכיבים:</strong>
                       {this.state.errorInfo.componentStack}
                     </>
                   )}
@@ -80,18 +80,18 @@ export class ErrorBoundary extends Component<Props, State> {
                 className="button-primary"
                 onClick={this.handleReset}
               >
-                🔄 Reload Application
+                <span aria-hidden="true">🔄</span> טעינה מחדש של האפליקציה
               </button>
               <button 
                 className="button-secondary"
                 onClick={() => window.history.back()}
               >
-                ← Go Back
+                <span aria-hidden="true">→</span> חזרה לדף הקודם
               </button>
             </div>
 
             <p className="error-hint">
-              If this problem persists, please check the browser console for more details.
+              אם הבעיה נמשכת, פנו לתמיכה וציינו מה עשיתם לפני שהופיעה השגיאה.
             </p>
           </div>
         </div>

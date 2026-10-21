@@ -95,8 +95,8 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
     <div className="modal-overlay" onClick={handleCancel}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>Edit {fieldLabel}</h3>
-          <button className="close-button" onClick={handleCancel} aria-label="Close">
+          <h3>תיקון השדה: {fieldLabel}</h3>
+          <button className="close-button" onClick={handleCancel} aria-label="סגירה">
             ×
           </button>
         </div>
@@ -116,7 +116,8 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
                     value={editValue || ''}
                     onChange={(e) => setEditValue(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={`Enter ${fieldLabel.toLowerCase()}`}
+                    placeholder={`הזינו ${fieldLabel}`}
+                    dir="auto"
                     autoFocus
                     list={`suggestions-${fieldName}`}
                   />
@@ -133,13 +134,14 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
                   value={editValue || ''}
                   onChange={(e) => setEditValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={`Enter ${fieldLabel.toLowerCase()}`}
+                  placeholder={`הזינו ${fieldLabel}`}
+                  dir="auto"
                   autoFocus
                 />
               )}
               
               <p className="field-hint">
-                Original: <strong>{currentValue || '(none)'}</strong>
+                הערך שחולץ: <strong dir="auto">{currentValue || '(אין ערך)'}</strong>
               </p>
               {helperText && <p className="field-hint" dir="rtl">{helperText}</p>}
               {validationError && <p className="field-error" role="alert" dir="rtl">{validationError}</p>}
@@ -148,23 +150,23 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
 
           {fieldType === 'list' && (
             <div className="list-input-group">
-              <label>Current Values</label>
+              <label>הערכים הנוכחיים</label>
               
               {(!editValue || editValue.length === 0) && (
-                <p className="empty-list">No values yet</p>
+                <p className="empty-list">עדיין אין ערכים</p>
               )}
               
               {editValue && editValue.length > 0 && (
                 <ul className="list-items">
                   {editValue.map((item: string, index: number) => (
                     <li key={index} className="list-item">
-                      <span className="item-value">{item}</span>
+                      <span className="item-value" dir="auto">{item}</span>
                       <button
                         className="remove-button"
                         onClick={() => handleRemoveListItem(index)}
-                        aria-label={`Remove ${item}`}
+                        aria-label={`הסרת ${item}`}
                       >
-                        Remove
+                        הסרה
                       </button>
                     </li>
                   ))}
@@ -172,7 +174,7 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
               )}
 
               <div className="add-item-section">
-                <label htmlFor="new-item-input">Add New Value</label>
+                <label htmlFor="new-item-input">הוספת ערך</label>
                 <div className="add-item-controls">
                   <input
                     id="new-item-input"
@@ -180,14 +182,15 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
                     value={newListItem}
                     onChange={(e) => setNewListItem(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Enter value and press Enter"
+                    placeholder="הזינו ערך ולחצו Enter"
+                    dir="auto"
                   />
                   <button
                     className="add-button"
                     onClick={handleAddListItem}
                     disabled={!newListItem.trim()}
                   >
-                    Add
+                    הוספה
                   </button>
                 </div>
               </div>
@@ -197,10 +200,10 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
 
         <div className="modal-footer">
           <button className="button-secondary" onClick={handleCancel}>
-            Cancel
+            ביטול
           </button>
           <button className="button-primary" onClick={handleSave}>
-            Save Changes
+            שמירת התיקון
           </button>
         </div>
       </div>

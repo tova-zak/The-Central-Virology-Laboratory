@@ -65,16 +65,16 @@ export const AssignCommitmentModal: React.FC<AssignCommitmentModalProps> = ({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} dir="rtl">
         <div className="modal-header">
-          <h3>שיוך התחייבות לבדיקה</h3>
-          <button className="modal-close-btn" onClick={onClose}>×</button>
+          <h3>שיוך התחייבות לטופס</h3>
+          <button className="modal-close-btn" onClick={onClose} aria-label="סגירה">×</button>
         </div>
 
         <div className="modal-body">
           <p style={{ marginBottom: '1rem' }}>
-            התחייבות מספר: <strong>{commitmentValue}</strong>
+            התחייבות מספר: <strong dir="auto">{commitmentValue}</strong>
           </p>
           <p style={{ marginBottom: '1rem', color: '#666' }}>
-            בחר את הבדיקה שאליה משתייכת ההתחייבות:
+            בחרו את הטופס שאליו שייכת ההתחייבות:
           </p>
 
           <div className="test-record-list">
@@ -88,7 +88,7 @@ export const AssignCommitmentModal: React.FC<AssignCommitmentModalProps> = ({
                   {getFieldValue(record.patient_first_name)} {getFieldValue(record.patient_last_name)}
                 </div>
                 <div className="test-record-item-details">
-                  ת.ז: {getFieldValue(record.patient_id_number)} | מזהה: {record.test_id}
+                  מספר זהות: <bdi dir="ltr">{getFieldValue(record.patient_id_number)}</bdi> | מזהה טופס: <bdi dir="ltr">{record.test_id}</bdi>
                 </div>
               </div>
             ))}
@@ -96,7 +96,7 @@ export const AssignCommitmentModal: React.FC<AssignCommitmentModalProps> = ({
 
           {testRecords.length === 0 && (
             <p style={{ textAlign: 'center', color: '#999', padding: '2rem' }}>
-              אין בדיקות זמינות
+              אין טפסים זמינים לשיוך
             </p>
           )}
         </div>
@@ -110,7 +110,7 @@ export const AssignCommitmentModal: React.FC<AssignCommitmentModalProps> = ({
             onClick={handleAssign}
             disabled={!selectedTestId}
           >
-            שייך לבדיקה
+            שיוך לטופס
           </button>
         </div>
       </div>
