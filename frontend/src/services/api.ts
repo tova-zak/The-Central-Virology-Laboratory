@@ -345,3 +345,38 @@ export const resolveCommitmentRelationship = async (
   );
   return response.data;
 };
+
+
+// ---- Saved records (history + search): read-only, authenticated, POST body keeps identifiers out of URLs ----
+export type SavedBatchStatus = 'pending' | 'needs_correction' | 'approved';
+export type SavedStatusFilter = 'all' | SavedBatchStatus;
+
+export interface SavedBatchSummary {
+  batch_id: string;
+  created_at: string | null;
+  processing_status: string | null;
+  document_count: number;
+  record_count: number;
+  approved_count: number;
+  needs_correction_count: number;
+  pending_count: number;
+  batch_status: SavedBatchStatus;
+  senders: string[];
+}
+
+export interface SavedBatchSearchResponse {
+  items: SavedBatchSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  status_counts: Record<SavedStatusFilter, number>;
+}
+
+export const searchSavedBatches = async (
+  params: { query: string; status: SavedStatusFilter; limit: number; offset: number },
+  signal?: AbortSignal
+): Promise<SavedBatchSearchResponse> => {
+  const response = await apiClient.post<SavedBatchSearchResponse>('/api/batches/search', params, { signal });
+  return response.data;
+};

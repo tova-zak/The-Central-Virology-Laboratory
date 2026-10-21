@@ -8,6 +8,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import { UploadForm } from '../upload/UploadForm';
+import { SavedRecordsScreen } from '../saved/SavedRecordsScreen';
 import { ReviewScreenNew } from '../review/ReviewScreenNew';
 import { processBatch, getBatchStatus, retryFailedPages } from '../../services/api';
 import type { BatchStatusResponse, ProcessingProgress } from '../../services/api';
@@ -29,6 +30,7 @@ export const WorkflowScreen: React.FC = () => {
   const pollRef = useRef<number | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'workflow' | 'saved'>('workflow');
 
   // Restore batch on mount
   useEffect(() => {
@@ -46,11 +48,11 @@ export const WorkflowScreen: React.FC = () => {
     }
   }, [currentBatchId]);
 
-  const restoreBatchState = async () => {
+  const restoreBatchState = async (explicitBatchId?: string) => {
     try {
       // Try URL first, then localStorage
       const urlParams = new URLSearchParams(window.location.search);
-      let batchId = urlParams.get('batch');
+      let batchId = explicitBatchId ?? urlParams.get('batch'); // explicit id: opened from saved records
       
       if (!batchId) {
         batchId = localStorage.getItem(STORAGE_KEY);
@@ -231,6 +233,21 @@ export const WorkflowScreen: React.FC = () => {
     window.history.replaceState({}, '', url.toString());
   };
 
+  // Open a saved batch through the same load flow used to restore a batch after refresh.
+  const handleOpenSaved = async (batchId: string) => {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setPollingInterval(null);
+    setProcessing(false);
+    setProcessingError(null);
+    setProgress(null);
+    setView('workflow');
+    setLoading(true);
+    await restoreBatchState(batchId);
+  };
+
   const handleNewBatch = () => {
     handleBackToUpload();
   };
@@ -247,6 +264,14 @@ export const WorkflowScreen: React.FC = () => {
 
   return (
     <div className="workflow-screen">
+      <nav className="workflow-nav" aria-label="ניווט ראשי">
+        <button type="button" className="saved-chip" aria-current={view === 'workflow' ? 'page' : undefined} onClick={() => setView('workflow')}>תהליך עבודה</button>
+        <button type="button" className="saved-chip" aria-current={view === 'saved' ? 'page' : undefined} onClick={() => setView('saved')}>מסמכים שמורים</button>
+      </nav>
+
+      {view === 'saved' && <SavedRecordsScreen onOpenBatch={handleOpenSaved} />}
+
+      <div hidden={view === 'saved'}>
       {/* Stage Indicator */}
       <div className="stage-indicator">
         <div className={`stage-item ${stage === 'upload' ? 'active' : stage === 'processing' || stage === 'review' ? 'completed' : ''}`}>
@@ -352,6 +377,7 @@ export const WorkflowScreen: React.FC = () => {
           />
         </div>
       )}
+      </div>
     </div>
   );
 };

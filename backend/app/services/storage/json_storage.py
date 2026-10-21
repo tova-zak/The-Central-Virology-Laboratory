@@ -108,6 +108,16 @@ class JSONStorage:
         """
         return [f.stem for f in self.batches_dir.glob("*.json")]
     
+    def iter_batch_rows(self, chunk_size: int = 50):
+        """Read-only: yield (batch_id, created_at, batch_data) newest first (local dev storage)."""
+        rows = []
+        for batch_file in self.batches_dir.glob("*.json"):
+            data = self.load_batch(batch_file.stem)
+            if isinstance(data, dict):
+                rows.append((batch_file.stem, str(data.get("saved_at") or ""), data))
+        rows.sort(key=lambda r: (r[1], r[0]), reverse=True)
+        yield from rows
+
     def delete_batch(self, batch_id: str) -> bool:
         """Delete batch data.
         
