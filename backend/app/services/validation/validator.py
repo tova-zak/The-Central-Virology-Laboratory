@@ -56,6 +56,15 @@ def validate_id_number(id_number: str) -> Optional[ValidationIssue]:
             message=f"ID number must be 9 digits, got {len(id_clean)}: {id_number}"
         )
     
+    # All zeros passes the checksum (sum 0) but is not a real ID number
+    if id_clean == "0" * 9:
+        return ValidationIssue(
+            field_name="patient_id_number",
+            severity="error",
+            message=f"ID number cannot be all zeros: {id_number}",
+            suggested_fix="Verify ID number is correct"
+        )
+    
     # Calculate checksum (process from left to right)
     # First digit (index 0) multiplied by 1
     # Second digit (index 1) multiplied by 2

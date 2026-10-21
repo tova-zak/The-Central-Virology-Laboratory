@@ -1,5 +1,5 @@
 {
-  "version": "1.1",
+  "version": "1.2",
   "last_updated": "2026-10-15",
   "source": "Wikipedia: List of hospitals in Israel (https://en.wikipedia.org/wiki/List_of_hospitals_in_Israel) - retrieved 2026-10-15",
   "description": "Closed list of recognized medical institutions in Israel for sender field validation",
@@ -34,7 +34,7 @@
     },
     {
       "canonical_name": "בית חולים מאיר",
-      "aliases": ["מאיר", "ספיר", "כפר סבא", "meir hospital", "sapir"],
+      "aliases": ["מאיר", "ספיר", "meir hospital", "sapir"],
       "type": "general_hospital",
       "district": "central"
     },
@@ -46,13 +46,13 @@
     },
     {
       "canonical_name": "בית חולים שניידר לילדים",
-      "aliases": ["שניידר", "schneider", "פתח תקווה"],
+      "aliases": ["שניידר", "schneider"],
       "type": "pediatric_hospital",
       "district": "central"
     },
     {
       "canonical_name": "המרכז הרפואי קפלן",
-      "aliases": ["קפלן", "רחובות", "kaplan"],
+      "aliases": ["קפלן", "kaplan"],
       "type": "general_hospital",
       "district": "central"
     },
@@ -76,13 +76,13 @@
     },
     {
       "canonical_name": "בית חולים הלל יפה",
-      "aliases": ["הלל יפה", "חדרה", "hillel yaffe"],
+      "aliases": ["הלל יפה", "hillel yaffe"],
       "type": "general_hospital",
       "district": "haifa"
     },
     {
       "canonical_name": "בית חולים לניאדו",
-      "aliases": ["לניאדו", "נתניה", "laniado"],
+      "aliases": ["לניאדו", "laniado"],
       "type": "general_hospital",
       "district": "central"
     },
@@ -106,61 +106,61 @@
     },
     {
       "canonical_name": "המרכז הרפואי הדסה הר הצופים",
-      "aliases": ["הדסה הר הצופים", "הדסה צופים", "mount scopus", "hadassah mount scopus"],
+      "aliases": ["הדסה הר הצופים", "הדסה", "הדסה צופים", "mount scopus", "hadassah mount scopus"],
       "type": "general_hospital",
       "district": "jerusalem"
     },
     {
       "canonical_name": "המרכז הרפואי העמק",
-      "aliases": ["העמק", "עפולה", "haemek", "afula"],
+      "aliases": ["העמק", "haemek"],
       "type": "general_hospital",
       "district": "north"
     },
     {
       "canonical_name": "המרכז הרפואי לגליל",
-      "aliases": ["לגליל", "נהריה", "galilee medical center", "nahariya"],
+      "aliases": ["לגליל", "galilee medical center"],
       "type": "general_hospital",
       "district": "north"
     },
     {
       "canonical_name": "המרכז הרפואי פוריה (ברוך פדה)",
-      "aliases": ["פוריה", "ברוך פדה", "טבריה", "poriya", "baruch padeh", "mazra"],
+      "aliases": ["פוריה", "ברוך פדה", "poriya", "baruch padeh", "mazra"],
       "type": "general_hospital",
       "district": "north"
     },
     {
       "canonical_name": "בית חולים צפון (מרכז רפואי צפון)",
-      "aliases": ["צפון", "tzafon"],
+      "aliases": ["בית חולים צפון", "מרכז רפואי צפון"],
       "type": "general_hospital",
       "district": "north"
     },
     {
       "canonical_name": "בית חולים רבקה זיו",
-      "aliases": ["רבקה זיו", "זיו", "צפת", "rebecca sieff", "ziv"],
+      "aliases": ["רבקה זיו", "rebecca sieff"],
       "type": "general_hospital",
       "district": "north"
     },
     {
       "canonical_name": "המרכז הרפואי ברזילי",
-      "aliases": ["ברזילי", "אשקלון", "barzilai"],
+      "aliases": ["ברזילי", "barzilai"],
       "type": "general_hospital",
       "district": "south"
     },
     {
       "canonical_name": "המרכז הרפואי סורוקה",
-      "aliases": ["סורוקה", "באר שבע", "soroka"],
+      "aliases": ["סורוקה", "soroka"],
       "type": "general_hospital",
       "district": "south"
     },
     {
       "canonical_name": "המרכז הרפואי יוספטל",
-      "aliases": ["יוספטל", "אילת", "yoseftal"],
+      "aliases": ["יוספטל", "yoseftal"],
       "type": "general_hospital",
       "district": "south"
     },
     {
       "canonical_name": "המרכז הרפואי וולפסון",
-      "aliases": ["וולפסון", "חולון", "wolfson"],
+      "aliases": ["וולפסון", "wolfson"],
       "type": "general_hospital",
       "district": "tel_aviv"
     },
@@ -190,7 +190,7 @@
     },
     {
       "canonical_name": "בית חולים מעייני הישועה",
-      "aliases": ["מעייני הישועה", "בני ברק", "mayanei hayeshua"],
+      "aliases": ["מעייני הישועה", "mayanei hayeshua"],
       "type": "general_hospital",
       "district": "tel_aviv"
     },
@@ -210,8 +210,9 @@
   "notes": [
     "List based on Wikipedia 'List of hospitals in Israel' (retrieved 2026-10-14)",
     "Includes 4 health funds and 31 general/private hospitals",
-    "Aliases include common abbreviations, old names, and city names where unambiguous",
-    "Matching is case-insensitive and handles various punctuation",
+    "Aliases include common abbreviations, old names and hospital-specific names; city-only names are NOT aliases",
+    "Matching is exact on normalized text (case-insensitive, punctuation/hyphen tolerant), after optionally stripping one generic prefix such as 'בית חולים' or 'קופת חולים'; no substring matching",
+    "'הדסה' alone is deliberately listed under both Hadassah campuses so it resolves as ambiguous (null + warning)",
     "Generic terms like 'emergency room' or city names alone are NOT included as they are ambiguous",
     "If sender text cannot be matched to this closed list, return null and flag for human review"
   ]

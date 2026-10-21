@@ -28,7 +28,9 @@ def temp_storage(tmp_path, monkeypatch):
     
     # Reload settings to pick up new path
     from app.core import config
-    config.settings = config.Settings()
+    # monkeypatch so the replaced settings object is restored after the test
+    # (otherwise it leaks into later test modules, e.g. upload-limit/export tests)
+    monkeypatch.setattr(config, "settings", config.Settings())
     
     return storage_path
 

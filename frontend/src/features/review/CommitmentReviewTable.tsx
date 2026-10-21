@@ -6,7 +6,7 @@ import React from 'react';
 import { CommitmentRecord } from '../../services/api';
 import { getFieldLabel } from './utils/editPermissions';
 import { FieldEvidence } from './FieldEvidence';
-import { canApproveAsIs, isHumanVerified, visiblePageWarnings } from './utils/evidence';
+import { canApproveAsIs, exportableCommitmentCount, isHumanVerified, visiblePageWarnings } from './utils/evidence';
 
 export const REVIEW_FIELDS = [
   'patient_first_name', 'patient_last_name', 'patient_id_number',
@@ -64,6 +64,11 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
                     <button type="button" onClick={() => onEdit(record.commitment_record_id, name, value ?? emptyValue)}>
                       {approvable ? 'ערוך ואשר' : 'תקן ואשר'}
                     </button>
+                    {name === 'commitment_number' && exportableCommitmentCount(field) > 1 && (
+                      <span className="cell-export-note">
+                        {`ייוצאו ${exportableCommitmentCount(field)} שורות באקסל (מספר לכל התחייבות)`}
+                      </span>
+                    )}
                     <FieldEvidence
                       fieldName={name}
                       field={field}

@@ -97,6 +97,23 @@ export function effectiveValue(field?: EvidenceField | null): unknown {
   return field.reviewed_value ?? field.normalized_value ?? field.raw_value ?? null;
 }
 
+/**
+ * Number of Excel rows a commitment_number field produces (mirrors the backend export):
+ * the effective value plus every non-rejected "multiple_commitments_on_page" candidate.
+ * Unlike pendingCandidates, this stays accurate after the field is approved.
+ */
+export function exportableCommitmentCount(field?: EvidenceField | null): number {
+  const value = effectiveValue(field);
+  if (value === null || value === undefined || String(value).trim() === '') return 1;
+  const numbers = new Set<string>([String(value)]);
+  for (const c of field?.candidates ?? []) {
+    if (c.reason === 'multiple_commitments_on_page' && c.status !== 'rejected' && c.value) {
+      numbers.add(c.value);
+    }
+  }
+  return numbers.size;
+}
+
 /** True when the date has a two-digit year, so the century is unknown. */
 export function isAmbiguousYearDate(field?: EvidenceField | null): boolean {
   if (!field || isHumanVerified(field)) return false;
