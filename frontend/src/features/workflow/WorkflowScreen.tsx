@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UploadForm } from '../upload/UploadForm';
 import { ReviewScreenNew } from '../review/ReviewScreenNew';
-import { processBatch, getBatchStatus } from '../../services/api';
+import { processBatch, getBatchStatus, retryFailedPages } from '../../services/api';
 import type { BatchStatusResponse, ProcessingProgress } from '../../services/api';
 import { decidePoll, POLL_INTERVAL_MS } from './pollingPolicy';
 import './WorkflowScreen.css';
@@ -192,6 +192,21 @@ export const WorkflowScreen: React.FC = () => {
     }
   };
 
+  const handleRetryFailed = async () => {
+    if (!currentBatchId) return;
+    try {
+      await retryFailedPages(currentBatchId);
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Retry could not be started');
+      return;
+    }
+    setProcessing(true);
+    setProcessingError(null);
+    setStage('processing');
+    setProgress({ current: 0, total: 0, current_file: null });
+    startPolling(currentBatchId);
+  };
+
   const handleBackToUpload = () => {
     // Stop polling if active
     if (pollingInterval) {
@@ -329,6 +344,7 @@ export const WorkflowScreen: React.FC = () => {
           <ReviewScreenNew 
             batchId={currentBatchId} 
             onBack={handleBackToUpload}
+            onRetryFailed={handleRetryFailed}
           />
         </div>
       )}

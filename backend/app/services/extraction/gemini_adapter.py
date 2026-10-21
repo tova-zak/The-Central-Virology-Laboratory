@@ -80,6 +80,9 @@ def _failure_diagnostics(error: Exception) -> dict:
                     value = None
                 if isinstance(value, str) and value:
                     result.setdefault(key, re.sub(r"[^\x20-\x7e]", "?", value)[:60])
+            retry_after = headers.get("retry-after") if hasattr(headers, "get") else None
+            if isinstance(retry_after, str) and retry_after.strip().isdigit():
+                result.setdefault("retry_after", min(int(retry_after.strip()), 3600))
         for attribute in ("errno", "winerror", "verify_code"):
             value = getattr(item, attribute, None)
             if isinstance(value, int):
@@ -112,7 +115,10 @@ def _provider_failure(error: Exception) -> ExtractionError:
         if any(isinstance(item, (TimeoutError, httpx.TimeoutException)) for item in chain):
             diagnostics["timeout_layer"] = "httpx" if any(
                 isinstance(item, httpx.TimeoutException) for item in chain) else "sdk_or_transport"
-            return failure("Gemini request timed out", code="provider_timeout", retryable=True)
+            # Only a timeout before the request was sent (connect/pool) is safe to repeat. After a read/write timeout the
+            # same request would hit the same limit again (an identical 60 s wait with no new information).
+            return failure("Gemini request timed out", code="provider_timeout",
+                           retryable=diagnostics.get("timeout_phase") in ("connect", "pool"))
         if any(isinstance(item, PermissionError) for item in chain) or diagnostics.get("winerror") == 10013:
             return failure("Gemini connection denied by the local network or operating system", code="network_access_denied")
         if any(isinstance(item, ConnectionRefusedError) for item in chain):
@@ -139,7 +145,10 @@ def _provider_failure(error: Exception) -> ExtractionError:
     if "additionalproperties" in text or ("schema" in text and (status == 400 or isinstance(error, ValueError))):
         return failure("Gemini rejected the structured output schema", code="schema_incompatible")
     if status is not None and status >= 500:
-        return failure(f"Gemini endpoint returned HTTP {status}", code="provider_unavailable", retryable=True)
+        # 500/502/503 are transient; 504 (deadline exceeded) and other 5xx would repeat identically. Respect Retry-After.
+        transient = status in (500, 502, 503)
+        return failure(f"Gemini endpoint returned HTTP {status}", code="provider_unavailable", retryable=transient,
+                       retry_after_seconds=diagnostics.get("retry_after") if transient else None)
     if status in (400, 402):
         return failure("Gemini rejected the request; check API configuration or billing", code="request_rejected")
     return failure("Gemini extraction failed; inspect safe diagnostics", code="extraction_failed")
@@ -655,15 +664,17 @@ class GeminiExtractor(Extractor):
                 raise ExtractionError("Gemini returned an invalid extraction structure", code="invalid_response") from None
 
             # Context-aware commitment filtering (uses standalone commitment_rules module)
-            from app.services.extraction.commitment_rules import filter_commitments
+            from app.services.extraction.commitment_rules import classify_commitments
             
-            filtered_commitments, filter_warnings = filter_commitments(
+            classification = classify_commitments(
                 commitment_numbers=fields.get('commitment_numbers', []),
                 commitment_types=fields.get('commitment_types', []),
                 central_numbers=fields.get('central_numbers', []),
                 sender=fields.get('sender')
             )
-            fields['commitment_numbers'] = filtered_commitments
+            filter_warnings = classification.warnings
+            fields['commitment_numbers'] = classification.accepted
+            fields['commitment_candidates'] = classification.candidates
             
             # Merge filter warnings with extraction warnings
             existing_warnings = fields.get('warnings', [])

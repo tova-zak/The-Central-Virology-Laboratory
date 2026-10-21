@@ -1,4 +1,5 @@
 """Document viewing API endpoints."""
+import hashlib
 import re
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
@@ -6,6 +7,7 @@ from fastapi.responses import FileResponse, Response
 
 from app.core.config import settings
 from app.services.storage import get_storage_backend
+from app.services.storage.local_spool import fetch_original, OriginalUnavailable
 
 
 router = APIRouter(prefix="/api", tags=["documents"])
@@ -65,7 +67,13 @@ async def get_document(batch_id: str, document_id: str):
         if document is None:
             raise HTTPException(404, "Document not found in batch")
         name = document["storage_name"]
-        content = storage.download_file(batch_id, name)
+        try:
+            content, source = fetch_original(storage, batch_id, document)
+        except OriginalUnavailable as unavailable:
+            raise HTTPException(502, unavailable.message) from None
+        expected = document.get("sha256")
+        if expected and source == "remote" and hashlib.sha256(content).hexdigest() != expected:
+            raise HTTPException(502, "Stored original does not match the uploaded file (SHA-256 mismatch)")
         return Response(content, media_type=ALLOWED_MIMES[Path(name).suffix],
                         headers={"Content-Disposition": f'inline; filename="{name}"',
                                  "Cache-Control": "no-store"})

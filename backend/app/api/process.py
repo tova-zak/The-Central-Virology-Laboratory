@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
-from app.services.processing.background import get_processor, ProcessingStatus
+from app.services.processing.background import get_processor, ProcessingStatus, find_retry_targets
 from app.services.validation import validator
 from app.services.export import ExcelExporter
 from app.services.storage import get_storage_backend
@@ -90,6 +90,34 @@ async def process_batch(batch_id: str):
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e)
         )
+
+
+@router.post("/batches/{batch_id}/retry-failed", status_code=status.HTTP_202_ACCEPTED)
+async def retry_failed_pages(batch_id: str):
+    """Re-run extraction ONLY for failed/skipped pages nobody has touched, without re-uploading.
+    Extracted and human-reviewed/edited records are never overwritten."""
+    batch_data = _storage.load_batch(batch_id)
+    if not batch_data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Batch {batch_id} not found")
+    processor = get_processor()
+    existing_job = processor.get_job_status(batch_id)
+    if existing_job and existing_job.status in [ProcessingStatus.QUEUED, ProcessingStatus.PROCESSING]:
+        return {"batch_id": batch_id, "status": existing_job.status.value,
+                "message": "Processing already in progress", "progress": existing_job.progress}
+    if batch_data.get("status") not in ("failed", "completed_with_errors", "quota_exhausted"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only batches with failed or skipped pages can be retried")
+    targets = find_retry_targets(batch_data)
+    if not targets:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "No failed or skipped pages are eligible for retry (extracted or human-edited pages are never overwritten)")
+    if processor.active_job_count() >= settings.concurrent_processing_batches:
+        raise HTTPException(429, "Processing capacity reached; retry later", headers={"Retry-After": "30"})
+    try:
+        job = processor.start_processing(batch_id, retry_targets=targets)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(error))
+    return {"batch_id": batch_id, "status": job.status.value, "message": "Retry started",
+            "pages_to_retry": len(targets), "progress": job.progress}
 
 
 def _report_interrupted_if_stale(batch_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -266,6 +294,16 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
                 detail=f"Field {field_name} cannot be set to empty (required by policy)"
             )
     
+    if field_name == "received_date" and isinstance(new_value, str) and new_value.strip():
+        # A reviewer must supply a complete, real date: a two-digit year is never accepted or guessed.
+        from app.services.validation.date_normalizer import assess_date
+        assessment = assess_date(new_value)
+        if assessment.status in ("ambiguous_year", "invalid_date", "unrecognized"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Enter a complete valid date with a four-digit year (for example 15/03/2024)"
+            )
+        new_value = assessment.normalized or new_value
     field["reviewed_value"] = new_value
     field["review_state"] = "human_verified"
     
@@ -289,6 +327,38 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
         "can_export": can_export,
         "blockers": blockers
     }
+
+
+@router.post("/batches/{batch_id}/tests/{test_id}/fields/{field_name}/candidates/reject")
+async def reject_field_candidate(batch_id: str, test_id: str, field_name: str, body: dict):
+    """Mark an unconfirmed candidate as rejected by the reviewer.
+
+    Only the candidate's status changes: no value is set and no review state is touched.
+    A field that is already human_verified is never modified.
+    Body: { "value": str }
+    """
+    batch_data = _storage.load_batch(batch_id)
+    if not batch_data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Batch {batch_id} not found or not processed")
+    record = next((r for r in batch_data.get("test_records", []) + batch_data.get("commitment_records", [])
+                   if r.get("test_id") == test_id or r.get("commitment_record_id") == test_id), None)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Test record {test_id} not found")
+    if field_name not in ("patient_first_name", "patient_last_name", "patient_id_number", "sender",
+                          "received_date", "central_numbers", "commitment_number") or field_name not in record:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Field {field_name} does not exist")
+    field = record[field_name]
+    if field.get("review_state") == "human_verified":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Field is already human verified")
+    value = body.get("value") if isinstance(body, dict) else None
+    candidate = next((c for c in field.get("candidates") or []
+                      if c.get("value") == value and c.get("status", "pending") != "rejected"), None)
+    if candidate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    candidate["status"] = "rejected"
+    _storage.save_batch(batch_id, batch_data)
+    can_export, blockers = _check_export_eligibility_commitments(batch_data.get("commitment_records", []))
+    return {"field": field, "can_export": can_export, "blockers": blockers}
 
 
 @router.post("/batches/{batch_id}/tests/{test_id}/fields/{field_name}/verify")
@@ -329,6 +399,14 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
     
     # Confirmed-empty protection: patient_id_number and central_numbers cannot be confirmed empty
     field = test_record_dict[field_name]
+    if field_name == "received_date":
+        from app.services.validation.date_normalizer import assess_date
+        effective = next((field.get(k) for k in ("reviewed_value", "normalized_value", "raw_value") if field.get(k)), None)
+        if effective and assess_date(effective).status in ("ambiguous_year", "invalid_date", "unrecognized"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This date cannot be approved as is; enter a complete valid date with a four-digit year"
+            )
     if field_name in ['patient_id_number', 'central_numbers']:
         # Check if the field is empty
         reviewed_val = field.get("reviewed_value")
@@ -491,9 +569,15 @@ def _validate_record(test_record: TestRecord):
     
     # Validate date
     if test_record.received_date.normalized_value:
-        issue = validator.validate_date(test_record.received_date.normalized_value)
+        normalized_date, issue = validator.assess_date(
+            test_record.received_date.raw_value or test_record.received_date.normalized_value
+        )
+        if normalized_date and test_record.received_date.reviewed_value is None:
+            test_record.received_date.normalized_value = normalized_date
         if issue:
-            test_record.received_date.extraction_state = ExtractionState.invalid
+            test_record.received_date.extraction_state = (
+                ExtractionState.uncertain if issue.severity == "warning" else ExtractionState.invalid
+            )
             test_record.received_date.review_state = ReviewState.needs_review
             test_record.received_date.validation_issues.append(issue)
 

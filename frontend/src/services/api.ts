@@ -39,6 +39,8 @@ export interface FieldValue<T = any> {
   validation_issues: ValidationIssue[];
   extractor_id?: string;
   extraction_attempt_id?: string;
+  candidates?: { value: string; source_label?: string | null; reason: string; status?: string }[];
+  extraction_notes?: string[];
 }
 
 export interface ValidationIssue {
@@ -110,6 +112,7 @@ export interface CommitmentRecord {
   sample_ids?: string[];  // NEW: explicit links to Sample[]
   relation_status: 'clear' | 'ambiguous' | 'manual';  // LEGACY: read-only mapping
   relationship_status?: 'explicit' | 'inferred' | 'unresolved_relationship' | 'none';  // NEW: per Decision D2
+  page_warnings?: string[];  // short, de-duplicated extraction warnings for the page
 }
 
 export interface ProcessingError {
@@ -222,6 +225,15 @@ export const processBatch = async (batchId: string): Promise<{ batch_id: string;
 };
 
 /**
+ * Re-run extraction only for failed/skipped pages that nobody has edited.
+ * Extracted and human-reviewed pages are never overwritten. Poll getBatchStatus() afterwards.
+ */
+export const retryFailedPages = async (batchId: string): Promise<{ batch_id: string; status: string; message: string; pages_to_retry?: number }> => {
+  const response = await apiClient.post(`/api/batches/${batchId}/retry-failed`);
+  return response.data;
+};
+
+/**
  * Get batch status and results
  */
 export const getBatchStatus = async (batchId: string): Promise<BatchStatusResponse> => {
@@ -241,6 +253,22 @@ export const updateField = async (
   const response = await apiClient.patch<TestRecord>(
     `/api/batches/${batchId}/tests/${testId}/fields/${fieldName}`,
     { new_value: newValue }
+  );
+  return response.data;
+};
+
+/**
+ * Reject an unconfirmed candidate. Changes only the candidate status; never sets a value or verifies a field.
+ */
+export const rejectFieldCandidate = async (
+  batchId: string,
+  testId: string,
+  fieldName: string,
+  value: string
+): Promise<{ field: FieldValue; can_export: boolean; blockers: string[] }> => {
+  const response = await apiClient.post(
+    `/api/batches/${batchId}/tests/${testId}/fields/${fieldName}/candidates/reject`,
+    { value }
   );
   return response.data;
 };

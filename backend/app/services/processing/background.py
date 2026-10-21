@@ -18,8 +18,10 @@ from app.core.hybrid_config import get_hybrid_config
 from app.services.documents.renderer import DocumentRenderer
 from app.services.extraction.gemini_adapter import GeminiExtractor
 from app.services.extraction.extractor import ExtractionError
+from app.services.extraction.page_evidence import attach_page_evidence
 from app.services.validation import validator
 from app.services.storage import get_storage_backend
+from app.services.storage.local_spool import fetch_original, OriginalUnavailable
 from app.domain.models import TestRecord, FieldValue, ExtractionState, ReviewState, LogicalForm, Sample, CommitmentRecord
 
 
@@ -53,6 +55,57 @@ def verify_download_integrity(document: dict, content: bytes) -> Optional[dict]:
                             "expected_sha256_prefix": expected[:8], "actual_sha256_prefix": actual[:8]}}
 
 
+_REVIEWABLE_FIELDS = ("patient_first_name", "patient_last_name", "patient_id_number", "sender",
+                      "received_date", "central_numbers", "commitment_number")
+
+
+def _is_empty(value) -> bool:
+    return value is None or value == "" or value == []
+
+
+def is_untouched_placeholder(record: dict) -> bool:
+    """A failed/skipped page record nobody has edited or verified: the only kind a retry may replace."""
+    if not str(record.get("commitment_record_id", "")).endswith("_error"):
+        return False
+    for name in _REVIEWABLE_FIELDS:
+        field = record.get(name)
+        if not isinstance(field, dict):
+            continue
+        if (field.get("review_state") == "human_verified" or not _is_empty(field.get("reviewed_value"))
+                or not _is_empty(field.get("raw_value"))):
+            return False
+    return True
+
+
+def find_retry_targets(batch_data: dict) -> set:
+    """(document_id, page_index) pairs eligible for a selective retry."""
+    pages = {d["document_id"]: d.get("page_count", 0) for d in batch_data.get("documents") or []}
+    targets = set()
+    for record in batch_data.get("commitment_records") or []:
+        if not is_untouched_placeholder(record):
+            continue
+        document_id, separator, page = str(record.get("form_id", "")).rpartition("_page_")
+        if separator and page.isdigit() and document_id in pages and int(page) < pages[document_id]:
+            targets.add((document_id, int(page)))
+    return targets
+
+
+def merge_retry_results(stored_records: list, new_records: list, targets: set) -> list:
+    """Replace only untouched placeholders of targeted pages with successful new records; keep everything else as stored."""
+    target_forms = {f"{document_id}_page_{page}" for document_id, page in targets}
+    fresh = {r["form_id"]: r for r in new_records if not str(r.get("commitment_record_id", "")).endswith("_error")}
+    return [fresh[r.get("form_id")] if (r.get("form_id") in target_forms and r.get("form_id") in fresh
+                                        and is_untouched_placeholder(r)) else r for r in stored_records]
+
+
+def _error_targets_retry(error: dict, targets: set) -> bool:
+    document_id = error.get("document_id")
+    if document_id not in {d for d, _ in targets}:
+        return False
+    page = error.get("page_index")
+    return page is None or (document_id, page) in targets
+
+
 class ProcessingStatus(str, Enum):
     """Processing job status."""
     QUEUED = "queued"
@@ -74,6 +127,7 @@ class ProcessingJob:
         self.progress = {"current": 0, "total": 0, "current_file": None}
         self.error: Optional[str] = None
         self.task: Optional[asyncio.Task] = None
+        self.retry_targets = None  # set of (document_id, page_index) for a selective retry run, else None
 
 
 class BackgroundProcessor:
@@ -207,7 +261,7 @@ class BackgroundProcessor:
         
         return self._hybrid_verifier
     
-    def start_processing(self, batch_id: str) -> ProcessingJob:
+    def start_processing(self, batch_id: str, retry_targets=None) -> ProcessingJob:
         """Start processing a batch in background.
         
         Args:
@@ -230,6 +284,7 @@ class BackgroundProcessor:
 
         # Create new job
         job = ProcessingJob(batch_id)
+        job.retry_targets = retry_targets
         self._jobs[batch_id] = job
         
         # Start async task
@@ -269,9 +324,12 @@ class BackgroundProcessor:
         try:
             logger.info(f"[{batch_id}] Starting batch processing")
             
+            retry_targets = job.retry_targets
             batch_data = self._storage.load_batch(batch_id) or {}
-            if batch_data.get("commitment_records"):
+            if retry_targets is None and batch_data.get("commitment_records"):
                 raise ValueError("Refusing to overwrite previously extracted or reviewed records")
+            if retry_targets is not None and not batch_data.get("commitment_records"):
+                raise ValueError("Nothing to retry: batch has no records")
             if settings.supabase_url and "documents" not in batch_data:
                 raise ValueError("Persistent original-document manifest missing")
             batch_dir = Path(settings.temp_storage_path) / batch_id
@@ -280,10 +338,18 @@ class BackgroundProcessor:
                 self._storage.save_batch(batch_id, batch_data)
                 batch_dir = Path(workspace.name)
                 for document in batch_data["documents"]:
+                    if retry_targets is not None and document["document_id"] not in {d for d, _ in retry_targets}:
+                        continue  # selective retry: untouched documents are not even downloaded
                     name = document["storage_name"]
                     from app.services.storage.storage_adapter import validate_storage_name
                     validate_storage_name(name)
-                    content = self._storage.download_file(batch_id, name)
+                    try:
+                        content, _source = fetch_original(self._storage, batch_id, document)
+                    except OriginalUnavailable as unavailable:
+                        logger.error("[%s] %s document=%s diagnostics=%s", batch_id, unavailable.code,
+                                     document.get("document_id"), unavailable.diagnostics)
+                        integrity_errors.append(unavailable.as_error(document.get("document_id")))
+                        continue
                     mismatch = verify_download_integrity(document, content)
                     if mismatch:
                         logger.error("[%s] storage_integrity_error document=%s diagnostics=%s", batch_id, mismatch["document_id"], mismatch["diagnostics"])
@@ -343,6 +409,8 @@ class BackgroundProcessor:
                     
                     # Step 2: Process each page independently
                     for page_index, image_bytes in enumerate(images):
+                        if retry_targets is not None and (document_id, page_index) not in retry_targets:
+                            continue
                         logger.info(f"[{batch_id}][{document_id}] Processing page {page_index + 1}/{len(images)}")
                         if time.monotonic() >= batch_deadline:
                             logger.error(f"[{batch_id}] Batch deadline reached; remaining pages are not processed")
@@ -477,7 +545,7 @@ class BackgroundProcessor:
             
             # New manifests retain accepted page counts, including unprocessed/error pages.
             represented_pages = {record.form_id for record in commitment_records}
-            for document in batch_data.get("documents", []):
+            for document in (batch_data.get("documents", []) if retry_targets is None else []):
                 for page_index in range(document.get("page_count", 0)):
                     form_id = f"{document['document_id']}_page_{page_index}"
                     if form_id not in represented_pages:
@@ -489,37 +557,52 @@ class BackgroundProcessor:
                                        "error_code": "page_not_processed"})
 
             job.progress.update({"pages_succeeded": pages_succeeded, "pages_failed": pages_failed})
+            new_records = [c.model_dump(mode="json") for c in commitment_records]
+            if retry_targets is None:
+                base, final_records, carried_errors = batch_data, new_records, []
+            else:
+                # Selective retry: merge into the LATEST stored batch so edits made meanwhile are never overwritten.
+                done_forms = {r["form_id"] for r in new_records}
+                for target_document, target_page in sorted(retry_targets):
+                    if f"{target_document}_page_{target_page}" not in done_forms:
+                        errors.append({"document_id": target_document, "page_index": target_page,
+                                       "error": "Page not processed; retry again later", "error_code": "page_not_processed"})
+                base = self._storage.load_batch(batch_id) or batch_data
+                final_records = merge_retry_results(base.get("commitment_records") or [], new_records, retry_targets)
+                carried_errors = [e for e in (base.get("errors") or []) if not _error_targets_retry(e, retry_targets)]
+            all_errors = carried_errors + errors
+            real_records = sum(1 for r in final_records if not str(r.get("commitment_record_id", "")).endswith("_error"))
             # Determine final status
             if job.status == ProcessingStatus.QUOTA_EXHAUSTED:
                 # Already set - keep it
                 pass
-            elif pages_succeeded == 0 and len(errors) > 0:
+            elif real_records == 0 and len(all_errors) > 0:
                 # Nothing was extracted: a terminal failure, not an "empty success" with placeholder records.
                 job.status = ProcessingStatus.FAILED
-                job.error = errors[0].get("error") or "Extraction failed for every page"
-            elif len(errors) > 0:
+                job.error = all_errors[0].get("error") or "Extraction failed for every page"
+            elif len(all_errors) > 0:
                 job.status = ProcessingStatus.COMPLETED_WITH_ERRORS
             else:
                 job.status = ProcessingStatus.COMPLETED
-            
+
             # Save results to persistent storage
             batch_result = {
-                **batch_data,
+                **base,
                 "batch_id": batch_id,
                 "status": job.status.value,
-                "commitment_records": [c.model_dump(mode="json") for c in commitment_records],
+                "commitment_records": final_records,
                 "statistics": {
-                    "total_pages": len(commitment_records),  # One page = one commitment
-                    "total_commitments": len(commitment_records),
-                    "pages_needing_review": sum(1 for c in commitment_records 
-                                                if c.commitment_number.review_state == ReviewState.needs_review 
-                                                or c.review_status == ReviewState.needs_review)
+                    "total_pages": len(final_records),  # One page = one commitment
+                    "total_commitments": len(final_records),
+                    "pages_needing_review": sum(1 for r in final_records
+                                                if (r.get("commitment_number") or {}).get("review_state") == "needs_review"
+                                                or r.get("review_status") == "needs_review")
                 },
-                "errors": errors,
-                "processed_count": len(commitment_records),
-                "error_count": len(errors)
+                "errors": all_errors,
+                "processed_count": len(final_records),
+                "error_count": len(all_errors)
             }
-            
+
             self._storage.save_batch(batch_id, batch_result)
             
             job.completed_at = datetime.utcnow()
@@ -551,6 +634,16 @@ class BackgroundProcessor:
                 "processed_count": 0,
                 "error_count": 1
             }
+            if job.retry_targets is not None:
+                # A failed retry must never discard earlier results: restore the stored state and append a note.
+                try:
+                    latest = self._storage.load_batch(batch_id) or batch_data
+                    notes = list(latest.get("errors") or []) + [
+                        {"error": "Retry failed; previous results were kept", "error_code": "retry_failed"}]
+                    error_result = {**latest, "status": "completed_with_errors" if latest.get("commitment_records") else "failed",
+                                    "errors": notes, "error_count": len(notes)}
+                except Exception:
+                    pass
             try:
                 self._storage.save_batch(batch_id, error_result)
             except Exception:
@@ -637,11 +730,16 @@ class BackgroundProcessor:
                          "sender", "received_date", "central_numbers")
         }
 
+        page_warnings = attach_page_evidence(
+            commitment_number_field, page_fields, fields,
+            list(getattr(extraction_result, "warnings", None) or []),
+        )
         # Create CommitmentRecord
         commitment = CommitmentRecord(
             commitment_record_id=commitment_record_id,
             form_id=f"{document_id}_page_{page_index}",  # One page = one "form" conceptually
             commitment_number=commitment_number_field,
+            page_warnings=page_warnings,
             **page_fields,
             sample_ids=[],  # Simplified: no separate Sample entities in one-page-one-commitment model
             central_number_refs=central_numbers,  # Store central numbers directly

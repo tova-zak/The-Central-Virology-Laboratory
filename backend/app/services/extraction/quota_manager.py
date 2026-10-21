@@ -18,11 +18,23 @@ logger = logging.getLogger(__name__)
 
 # Local conservative safety budgets, NOT the provider's actual project quotas.
 # Actual limits depend on project/model/tier; rotating keys does not increase them.
-FREE_TIER_LIMITS = {
+class _LocalLimits(dict):
+    """Defaults below; requests_per_minute/day are read from settings (LOCAL_QUOTA_REQUESTS_PER_MINUTE/DAY) at use time."""
+
+    def __getitem__(self, key):
+        from app.core.config import settings
+        if key == "requests_per_minute":
+            return settings.local_quota_requests_per_minute
+        if key == "requests_per_day":
+            return settings.local_quota_requests_per_day
+        return super().__getitem__(key)
+
+
+FREE_TIER_LIMITS = _LocalLimits({
     "requests_per_minute": 5,
     "requests_per_day": 20,
     "max_batch_requests": 15,
-}
+})
 
 
 @dataclass

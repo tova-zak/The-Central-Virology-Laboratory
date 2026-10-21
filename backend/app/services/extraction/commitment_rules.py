@@ -10,6 +10,8 @@ Business Rules (approved):
 """
 from typing import Dict, List, Set
 
+from app.services.extraction.commitment_classifier import classify_commitments
+
 
 def filter_commitments(
     commitment_numbers: List[str],
@@ -17,79 +19,13 @@ def filter_commitments(
     central_numbers: List[str],
     sender: str | None
 ) -> tuple[List[str], List[str]]:
-    """Filter commitment numbers based on context-aware business rules.
-    
-    Rules:
-    1. Labels "התחייבות" or "דרישה" → always commitment
-    2. Label "דגימה" → commitment ONLY if sender contains "לאומית"/"leumit" (case-insensitive)
-    3. Numbers already in central_numbers → NOT commitments
-    4. No label → NOT commitment (likely test number or other ID)
-    
-    Args:
-        commitment_numbers: List of candidate commitment numbers from extraction
-        commitment_types: List of {number, label} dicts labeling each commitment
-        central_numbers: List of central laboratory numbers from same form
-        sender: Sending organization name (or None)
-    
-    Returns:
-        tuple: (filtered_commitment_numbers, warnings)
+    """Backward-compatible wrapper: returns (accepted_commitments, warnings).
+
+    Rules live in commitment_classifier.classify_commitments, which also keeps rejected /
+    uncertain numbers as review candidates instead of discarding them silently.
     """
-    sender = sender or ''
-    sender_lower = sender.lower()
-    is_leumit = 'לאומית' in sender or 'leumit' in sender_lower
-    
-    central_nums_set = set(central_numbers)
-    
-    # If no types extracted, treat commitment_numbers as-is (backward compat)
-    if not commitment_types:
-        # Filter out overlaps with central_numbers only
-        filtered = [c for c in commitment_numbers if c not in central_nums_set]
-        warnings = []
-        if len(filtered) != len(commitment_numbers):
-            excluded = [c for c in commitment_numbers if c in central_nums_set]
-            warnings.append(
-                f"commitment_numbers: {excluded} also appear in central_numbers, excluded"
-            )
-        return filtered, warnings
-    
-    # Build map: number → label
-    type_map = {item['number']: item.get('label') for item in commitment_types}
-    
-    # Filter commitment_numbers based on rules
-    valid_commitments = []
-    warnings = []
-    
-    for comm_num in commitment_numbers:
-        label = type_map.get(comm_num)
-        
-        # Rule 3: overlap with central_numbers → reject
-        if comm_num in central_nums_set:
-            warnings.append(
-                f"commitment_numbers: '{comm_num}' also appears in central_numbers, excluded"
-            )
-            continue
-        
-        # Rule 1: התחייבות or דרישה → accept
-        if label in ['התחייבות', 'דרישה']:
-            valid_commitments.append(comm_num)
-            continue
-        
-        # Rule 2: דגימה → accept only for Leumit
-        if label == 'דגימה':
-            if is_leumit:
-                valid_commitments.append(comm_num)
-            else:
-                warnings.append(
-                    f"commitment_numbers: '{comm_num}' labeled 'דגימה' but sender is not Leumit, excluded"
-                )
-            continue
-        
-        # Rule 4: no label or unknown → reject
-        warnings.append(
-            f"commitment_numbers: '{comm_num}' has no recognized label, excluded (likely test number)"
-        )
-    
-    return valid_commitments, warnings
+    result = classify_commitments(commitment_numbers, commitment_types, central_numbers, sender)
+    return result.accepted, result.warnings
 
 
 def merge_multi_page_fields(
