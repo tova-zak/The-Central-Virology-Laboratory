@@ -5,6 +5,7 @@
  * Supports PDF documents and image files with proper blob handling.
  */
 import React, { useState, useEffect } from 'react';
+import { isCancel } from 'axios';
 import { apiClient } from '../../services/api';
 import './ReviewScreen.css';
 
@@ -32,9 +33,14 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<string>('');
 
-  // Load document as blob
+  // Load document as blob. Each run owns its AbortController and its blob URL,
+  // so cleanup (close / document change / unmount / StrictMode re-run) cancels
+  // the in-flight request and revokes exactly the URL this run created.
   useEffect(() => {
     if (!isOpen) return;
+
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
 
     setIsLoading(true);
     setError(null);
@@ -47,32 +53,51 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
         const response = await apiClient.get(url, {
           responseType: 'blob',
           timeout: 30000,
+          signal: controller.signal,
         });
 
+        // Cancelled/outdated request: do not create a URL or touch state
+        if (controller.signal.aborted) return;
+
         // Create object URL from blob
-        const blob = response.data;
-        const objectUrl = URL.createObjectURL(blob);
+        objectUrl = URL.createObjectURL(response.data);
         setBlobUrl(objectUrl);
-        
+
         // Get content type from response headers
         const ct = response.headers['content-type'];
         setContentType(typeof ct === 'string' ? ct : 'application/octet-stream');
         setIsLoading(false);
       } catch (err: any) {
-        console.error('Failed to load document:', err);
-        setError(err.response?.status === 404 
-          ? 'המסמך לא נמצא.'
-          : 'לא ניתן היה לטעון את המסמך. נסו שוב מאוחר יותר.');
+        // Expected cancellation (close, document change, unmount): ignore silently
+        if (
+          controller.signal.aborted ||
+          isCancel(err) ||
+          err?.code === 'ERR_CANCELED' ||
+          err?.name === 'AbortError' ||
+          err?.name === 'CanceledError'
+        ) {
+          return;
+        }
+        // Log only non-sensitive fields (never err.config, which may hold auth)
+        console.error('Failed to load document:', err?.code, err?.message);
+        if (err?.response?.status === 404) {
+          setError('המסמך לא נמצא.');
+        } else if (!err?.response) {
+          setError('לא ניתן לטעון את המסמך. בדוק את החיבור לשרת ונסה שוב.');
+        } else {
+          setError('לא ניתן היה לטעון את המסמך. נסו שוב מאוחר יותר.');
+        }
         setIsLoading(false);
       }
     };
 
     loadDocument();
 
-    // Cleanup: revoke object URL when modal closes or document changes
     return () => {
-      if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
+      controller.abort();
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
       }
     };
   }, [isOpen, batchId, documentId]);
