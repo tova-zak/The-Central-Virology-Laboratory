@@ -11,6 +11,7 @@ import './ReviewScreen.css';
 import { 
   getBatchStatus, 
   updateField,
+  rejectFieldCandidate,
   checkExportEligibility,
   BatchStatusResponse,
   TestRecord,
@@ -27,16 +28,19 @@ import { ResolveRelationshipModal } from './ResolveRelationshipModal';
 import { DocumentViewerModal } from './DocumentViewerModal';
 import { FormCard } from './FormCard';
 import { RelationshipEditor } from './RelationshipEditor';
+import { CommitmentReviewTable } from './CommitmentReviewTable';
+import { validateEditedValue } from './utils/evidence';
 
 interface ReviewScreenProps {
   batchId: string;
   onBack?: () => void;
+  onRetryFailed?: () => void;
 }
 
 type FieldName = 'patient_first_name' | 'patient_last_name' | 'patient_id_number' | 
                  'sender' | 'received_date' | 'central_numbers';
 
-export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }) => {
+export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, onRetryFailed }) => {
   const [batchData, setBatchData] = useState<BatchStatusResponse | null>(null);
   const [classified, setClassified] = useState<ClassifiedRecords | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,6 +74,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
     fieldName: string;
     currentValue: any;
     fieldType: 'text' | 'list';
+    helperText?: string;
   } | null>(null);
   
   // Assign commitment modal state
@@ -147,6 +152,14 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
     }
   };
 
+  const handleRejectCandidate = async (recordId: string, fieldName: string, value: string) => {
+    try {
+      await rejectFieldCandidate(batchId, recordId, fieldName, value);
+      await loadBatchData();
+    } catch (err: any) {
+      alert(`לא ניתן לדחות את המועמד: ${err.response?.data?.detail || err.message || 'שגיאה לא צפויה'}`);
+    }
+  };
   const handleAssignCommitment = async (commitmentId: string, testId: string) => {
     try {
       const { assignCommitmentToTest } = await import('../../services/api');
@@ -534,13 +547,14 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
     );
   };
 
-  const openEditModal = (testId: string, fieldName: string, currentValue: any) => {
+  const openEditModal = (testId: string, fieldName: string, currentValue: any, helperText?: string) => {
     setEditModal({
       isOpen: true,
       testId,
       fieldName,
       currentValue,
-      fieldType: fieldName === 'central_numbers' ? 'list' : 'text'
+      fieldType: fieldName === 'central_numbers' ? 'list' : 'text',
+      helperText
     });
   };
 
@@ -588,6 +602,11 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
         <section className="error-box" role="alert" dir="ltr">
           <h2>Extraction errors</h2>
           <p>Extraction was incomplete. Failed pages require manual review. Review all required fields before export.</p>
+          {onRetryFailed && (
+            <button onClick={onRetryFailed} className="retry-failed-btn">
+              Retry failed / skipped pages (pages already extracted or edited are kept)
+            </button>
+          )}
           <ul>{batchData.errors.map((failure, index) => (
             <li key={index}>
               {failure.error_code && <strong>{failure.error_code}: </strong>}{failure.error}
@@ -600,37 +619,16 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
 
       {/* Render based on view mode */}
       {batchData.commitment_records?.length > 0 && !batchData.test_records?.length ? (
-        <section className="table-section">
-          <h2>Review commitments by page</h2>
-          <table>
-            <thead><tr><th>Page</th>{[
-              'patient_first_name', 'patient_last_name', 'patient_id_number',
-              'sender', 'received_date', 'central_numbers', 'commitment_number'
-            ].map(name => <th key={name}>{getFieldLabel(name)}</th>)}</tr></thead>
-            <tbody>{batchData.commitment_records.map(record => (
-              <tr key={record.commitment_record_id}>
-                <td>{record.form_id}
-                  <button onClick={() => {
-                    const source = record.form_id?.match(/^(.+)_page_(\d+)$/);
-                    if (source) setDocumentModal({ isOpen: true, documentId: source[1], pageIndex: Number(source[2]) });
-                  }}>View source</button>
-                </td>
-                {(['patient_first_name', 'patient_last_name', 'patient_id_number',
-                   'sender', 'received_date', 'central_numbers', 'commitment_number'] as const).map(name => {
-                  const field = record[name];
-                  const value = field?.reviewed_value ?? field?.normalized_value ?? field?.raw_value;
-                  return <td key={name}>
-                    <span>{Array.isArray(value) ? value.join(', ') : value || '-'}</span>
-                    <span>{field?.review_state === 'human_verified' ? ' (Approved) ' : ' (Review required) '}</span>
-                    <button onClick={() => openEditModal(record.commitment_record_id, name, value ?? (name === 'central_numbers' ? [] : ''))}>
-                      Edit and approve
-                    </button>
-                  </td>;
-                })}
-              </tr>
-            ))}</tbody>
-          </table>
-        </section>
+        <CommitmentReviewTable
+          records={batchData.commitment_records}
+          onEdit={(recordId, fieldName, value, helperText) =>
+            openEditModal(recordId, fieldName, value, helperText)}
+          onRejectCandidate={handleRejectCandidate}
+          onViewSource={record => {
+            const source = record.form_id?.match(/^(.+)_page_(\d+)$/);
+            if (source) setDocumentModal({ isOpen: true, documentId: source[1], pageIndex: Number(source[2]) });
+          }}
+        />
       ) : viewMode === 'cards' ? renderCardsView() : (
         <>
           {/* Orphaned Commitments Section */}
@@ -699,6 +697,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack }
           fieldLabel={getFieldLabel(editModal.fieldName)}
           currentValue={editModal.currentValue}
           fieldType={editModal.fieldType}
+          helperText={editModal.helperText}
+          validate={(value) => validateEditedValue(editModal.fieldName, value)}
           onSave={(newValue) => handleEditField(editModal.testId, editModal.fieldName, newValue)}
           onClose={() => setEditModal(null)}
         />

@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.services.storage import get_storage_backend
+from app.services.documents.image_to_pdf import wrap_image_as_pdf
+from app.services.storage.local_spool import get_spool
 
 
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -123,6 +125,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
             raise HTTPException(400, "Declared file type does not match content")
         try:
             page_count = 1
+            stored_pdf = None  # set only for images: they are normalised to a one-page PDF
             if detected_mime == "application/pdf":
                 import fitz
                 with fitz.open(stream=content, filetype="pdf") as pdf:
@@ -135,6 +138,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
                     if image.width * image.height > settings.max_image_pixels:
                         raise ValueError("Image dimensions exceed limit")
                     image.verify()
+                stored_pdf = wrap_image_as_pdf(content, detected_mime, settings.max_image_pixels)
         except Exception:
             raise HTTPException(400, "Invalid, encrypted or oversized document") from None
         
@@ -143,13 +147,27 @@ async def upload_files(files: List[UploadFile] = File(...)):
         # Use detected content rather than an untrusted filename extension.
         file_ext = next(ext for magic, ext in ((b"%PDF", ".pdf"), (b"\x89PNG", ".png"),
                                                (b"\xff\xd8\xff", ".jpg")) if content.startswith(magic))
-        storage.upload_file(batch_id, f"{doc_id}{file_ext}", content)
-        content_sha256 = hashlib.sha256(content).hexdigest()
-        manifest.append({"document_id": doc_id, "storage_name": f"{doc_id}{file_ext}",
-                         "size_bytes": file_size, "page_count": page_count, "sha256": content_sha256})
+        stored = stored_pdf if stored_pdf is not None else content
+        if stored_pdf is not None:
+            file_ext = ".pdf"
+        storage.upload_file(batch_id, f"{doc_id}{file_ext}", stored)
+        if settings.supabase_url:
+            # Verified local copy of exactly the stored bytes (see local_spool.py). Best effort: remote copy is authoritative.
+            try:
+                get_spool().save(batch_id, f"{doc_id}{file_ext}", stored)
+            except Exception:
+                logger.warning("Local verified copy could not be saved for document=%s", doc_id)
+        # sha256/size_bytes always describe the STORED bytes (checked again on every download before extraction).
+        content_sha256 = hashlib.sha256(stored).hexdigest()
+        entry = {"document_id": doc_id, "storage_name": f"{doc_id}{file_ext}",
+                 "size_bytes": len(stored), "page_count": page_count, "sha256": content_sha256}
+        if stored_pdf is not None:
+            entry.update({"converted_from": "image", "original_content_type": detected_mime,
+                          "original_size_bytes": file_size, "original_sha256": hashlib.sha256(content).hexdigest()})
+        manifest.append(entry)
         # Safe identifiers only (no filename, no content): lets "what did I upload" be verified later.
         logger.info("Upload accepted batch=%s document=%s bytes=%d pages=%d sha256=%s",
-                    batch_id, doc_id, file_size, page_count, content_sha256)
+                    batch_id, doc_id, len(stored), page_count, content_sha256)
         
         documents.append(DocumentInfo(
             document_id=doc_id,

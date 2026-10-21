@@ -64,6 +64,14 @@ class EvidenceRef(BaseModel):
     confidence: Optional[float] = None
 
 
+class FieldCandidate(BaseModel):
+    """Unconfirmed review hint. Never applied automatically."""
+    value: str
+    source_label: Optional[str] = None
+    reason: str = ""
+    status: str = "pending"  # "pending" | "rejected" (reviewer decision; never "verified")
+
+
 class FieldValue(BaseModel, Generic[T]):
     """Generic field wrapper with extraction and review metadata.
     
@@ -102,6 +110,8 @@ class FieldValue(BaseModel, Generic[T]):
     verification_status: Optional[str] = None  # "verified" | "conflicting" | "gemini_only" | etc
     preprocessing_method: Optional[str] = None  # "original" | "deskewed" | "contrast_enhanced" | etc
     retry_count: int = 0  # Number of focused retry attempts
+    candidates: list[FieldCandidate] = Field(default_factory=list)
+    extraction_notes: list[str] = Field(default_factory=list)
 
 
 class TestRecord(BaseModel):
@@ -205,3 +215,4 @@ class CommitmentRecord(BaseModel):
     
     # Review status for this commitment
     review_status: ReviewState = ReviewState.pending
+    page_warnings: list[str] = Field(default_factory=list)

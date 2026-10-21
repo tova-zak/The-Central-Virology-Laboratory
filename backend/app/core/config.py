@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # Bind the Gemini HTTP client to IPv4 (local_address=0.0.0.0). For networks where IPv6 is advertised in DNS
     # but black-holed. NOTE: a custom transport bypasses httpx automatic proxy discovery (HTTP(S)_PROXY / system proxy).
     gemini_force_ipv4: bool = False
+    # Local safety budget for Gemini requests (each attempt counts). Set these to your project real provider limits,
+    # never above them; raising them does not increase the provider quota.
+    local_quota_requests_per_minute: int = Field(default=5, ge=1, le=1000)
+    local_quota_requests_per_day: int = Field(default=20, ge=1, le=100000)
     max_image_pixels: int = Field(default=20_000_000, ge=1, le=80_000_000)
 
     @property

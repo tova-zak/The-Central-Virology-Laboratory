@@ -21,6 +21,8 @@ interface EditFieldModalProps {
   currentValue: any;
   fieldType: 'text' | 'list';
   suggestions?: string[]; // For dropdown suggestions
+  helperText?: string; // Explains where a pre-filled value came from
+  validate?: (value: any) => string | null; // Returns an error message to block saving
 }
 
 export const EditFieldModal: React.FC<EditFieldModalProps> = ({
@@ -31,20 +33,29 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
   fieldLabel,
   currentValue,
   fieldType,
-  suggestions = []
+  suggestions = [],
+  helperText,
+  validate
 }) => {
   const [editValue, setEditValue] = useState<any>(currentValue);
   const [newListItem, setNewListItem] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
   
   useEffect(() => {
     // Reset edit value when modal opens with new data
     setEditValue(currentValue);
     setNewListItem('');
+    setValidationError(null);
   }, [currentValue, isOpen]);
 
   if (!isOpen) return null;
 
   const handleSave = () => {
+    const problem = validate ? validate(editValue) : null;
+    if (problem) {
+      setValidationError(problem);
+      return;
+    }
     onSave(editValue);
     onClose();
   };
@@ -130,6 +141,8 @@ export const EditFieldModal: React.FC<EditFieldModalProps> = ({
               <p className="field-hint">
                 Original: <strong>{currentValue || '(none)'}</strong>
               </p>
+              {helperText && <p className="field-hint" dir="rtl">{helperText}</p>}
+              {validationError && <p className="field-error" role="alert" dir="rtl">{validationError}</p>}
             </div>
           )}
 

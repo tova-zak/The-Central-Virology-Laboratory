@@ -80,60 +80,37 @@ def validate_id_number(id_number: str) -> Optional[ValidationIssue]:
     return None
 
 
+def assess_date(date_str, field_name: str = "received_date"):
+    """Return (normalized DD/MM/YYYY or None, ValidationIssue or None). Never guesses a century."""
+    from app.services.validation.date_normalizer import assess_date as _assess
+    result = _assess(date_str)
+    original = (date_str or "").strip() if isinstance(date_str, str) else date_str
+    if result.status == "empty":
+        return None, ValidationIssue(field_name=field_name, severity="error", message="Date is empty")
+    if result.status == "ok":
+        return result.normalized, None
+    if result.status == "future":
+        return result.normalized, ValidationIssue(field_name=field_name, severity="error",
+            message=f"Date is in the future: {original}", suggested_fix="Check the year")
+    if result.status == "ambiguous_year":
+        hints = ", ".join(result.candidates) if result.candidates else ""
+        return None, ValidationIssue(field_name=field_name, severity="warning",
+            message=f"Ambiguous two-digit year: {original}",
+            suggested_fix=f"Confirm the full year manually (possible: {hints})" if hints else "Confirm the full year manually")
+    if result.status == "invalid_date":
+        return None, ValidationIssue(field_name=field_name, severity="error",
+            message=f"Invalid date: {original} ({result.reason})", suggested_fix="Check day and month")
+    return None, ValidationIssue(field_name=field_name, severity="error",
+        message=f"Invalid date format: {original}",
+        suggested_fix="Expected: DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY or YYYY-MM-DD")
+
+
+
+
+
 def validate_date(date_str: str, field_name: str = "received_date") -> Optional[ValidationIssue]:
-    """Validate date format and check it's not in the future.
-    
-    Supports:
-    - ISO format: YYYY-MM-DD
-    - Israeli format: DD/MM/YYYY
-    
-    Args:
-        date_str: Date string to validate
-        field_name: Name of the field being validated
-        
-    Returns:
-        ValidationIssue if invalid, None if valid
-    """
-    if not date_str:
-        return ValidationIssue(
-            field_name=field_name,
-            severity="error",
-            message="Date is empty"
-        )
-    
-    date_str = date_str.strip()
-    parsed_date = None
-    
-    # Try ISO format
-    try:
-        parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
-    except ValueError:
-        pass
-    
-    # Try Israeli format
-    if parsed_date is None:
-        try:
-            parsed_date = datetime.strptime(date_str, "%d/%m/%Y")
-        except ValueError:
-            pass
-    
-    if parsed_date is None:
-        return ValidationIssue(
-            field_name=field_name,
-            severity="error",
-            message=f"Invalid date format: {date_str}",
-            suggested_fix="Expected: YYYY-MM-DD or DD/MM/YYYY"
-        )
-    
-    # Check not in future
-    if parsed_date > datetime.now():
-        return ValidationIssue(
-            field_name=field_name,
-            severity="error",
-            message=f"Date is in the future: {date_str}"
-        )
-    
-    return None
+    """Validate a date (see assess_date). Returns ValidationIssue if invalid, None if valid."""
+    return assess_date(date_str, field_name)[1]
 
 
 def validate_required_fields(
