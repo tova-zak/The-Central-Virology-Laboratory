@@ -724,6 +724,7 @@ class BackgroundProcessor:
         page_record = _map_extraction_to_test_record(extraction_result, document_id, page_index)
         _detect_uncertainty(page_record, extraction_result)
         _validate_record(page_record)
+        central_numbers = list(page_record.central_numbers.raw_value or [])  # blank/filler items removed
         page_fields = {
             name: getattr(page_record, name)
             for name in ("patient_first_name", "patient_last_name", "patient_id_number",

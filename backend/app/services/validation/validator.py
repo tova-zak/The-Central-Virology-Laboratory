@@ -10,7 +10,7 @@ NO AUTO-FIX: Only flag issues, never auto-correct.
 """
 from datetime import datetime
 from typing import Optional
-from app.domain.models import ValidationIssue, FieldValue, ExtractionState
+from app.domain.models import ValidationIssue, FieldValue, ExtractionState, ReviewState
 
 
 def validate_id_number(id_number: str) -> Optional[ValidationIssue]:
@@ -89,39 +89,35 @@ def validate_id_number(id_number: str) -> Optional[ValidationIssue]:
     return None
 
 
-def assess_date(date_str, field_name: str = "received_date"):
-    """Return (normalized DD/MM/YYYY or None, ValidationIssue or None). Never guesses a century."""
+def assess_date(date_str, field_name: str = "received_date", today: Optional[datetime] = None):
+    """Return (normalized DD/MM/YYYY or None, ValidationIssue or None).
+
+    Two-digit years follow the project policy 2000 + YY: the normalized 4-digit date is returned together with a
+    WARNING issue (code "century_inferred") because the century is an inference that a human must confirm.
+    A date after today stays an error (so 99 -> 2099 is rejected as future). Unusable dates return no value."""
     from app.services.validation.date_normalizer import assess_date as _assess
-    result = _assess(date_str)
+    result = _assess(date_str, today)
     original = (date_str or "").strip() if isinstance(date_str, str) else date_str
     if result.status == "empty":
         return None, ValidationIssue(field_name=field_name, severity="error", message="Date is empty")
     if result.status == "ok":
         return result.normalized, None
+    if result.status == "century_inferred":
+        return result.normalized, ValidationIssue(field_name=field_name, severity="warning", code="century_inferred",
+            message=f"Century inferred: {original} read as {result.normalized} (20YY)",
+            suggested_fix="השנה נקראה בספרתיים בלבד ופוענחה כ-20YY - יש לאשר או לתקן")
     if result.status == "future":
         return result.normalized, ValidationIssue(field_name=field_name, severity="error",
             message=f"Date is in the future: {original}", suggested_fix="Check the year")
-    if result.status == "ambiguous_year":
-        hints = ", ".join(result.candidates) if result.candidates else ""
-        return None, ValidationIssue(field_name=field_name, severity="warning",
-            message=f"Ambiguous two-digit year: {original}",
-            suggested_fix=f"Confirm the full year manually (possible: {hints})" if hints else "Confirm the full year manually")
     if result.status == "invalid_date":
         return None, ValidationIssue(field_name=field_name, severity="error",
             message=f"Invalid date: {original} ({result.reason})", suggested_fix="Check day and month")
     return None, ValidationIssue(field_name=field_name, severity="error",
         message=f"Invalid date format: {original}",
         suggested_fix="Expected: DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY or YYYY-MM-DD")
-
-
-
-
-
-def validate_date(date_str: str, field_name: str = "received_date") -> Optional[ValidationIssue]:
-    """Validate a date (see assess_date). Returns ValidationIssue if invalid, None if valid."""
-    return assess_date(date_str, field_name)[1]
-
-
+def validate_date(date_str: str, field_name: str = "received_date", today: Optional[datetime] = None) -> Optional[ValidationIssue]:
+    """Validate a date (see assess_date). Returns ValidationIssue if invalid or inferred, None if valid."""
+    return assess_date(date_str, field_name, today)[1]
 def validate_required_fields(
     test_record,
     required_fields: Optional[list[str]] = None
@@ -240,7 +236,11 @@ def validate_test_record(test_record) -> list[ValidationIssue]:
         date_issue = validate_date(test_record.received_date.raw_value, "received_date")
         if date_issue:
             issues.append(date_issue)
-            test_record.received_date.extraction_state = ExtractionState.invalid
+            if date_issue.severity == "error":
+                test_record.received_date.extraction_state = ExtractionState.invalid
+            else:  # century_inferred: usable value, but never confident until a human confirms
+                test_record.received_date.extraction_state = ExtractionState.uncertain
+                test_record.received_date.review_state = ReviewState.needs_review
             test_record.received_date.validation_issues.append(date_issue)
     
     # Validate required fields

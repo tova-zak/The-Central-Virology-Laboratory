@@ -62,9 +62,9 @@ def attach_page_evidence(commitment_field, page_fields: dict, fields: dict, warn
     if received is not None and received.raw_value:
         from app.services.validation.date_normalizer import assess_date
         assessment = assess_date(received.raw_value)
-        if assessment.status == "ambiguous_year":
-            for hint in assessment.candidates:  # review hints only: the century is never chosen here
-                _add_candidate(received, hint, "received_date", "ambiguous_two_digit_year")
+        if assessment.century_inferred:
+            # 2000+YY policy: the value is set elsewhere and flagged; only a note here, no candidate, no value change.
+            _add_note(received, "Two-digit year: century inferred as 20YY; confirm")
     first, last = page_fields.get("patient_first_name"), page_fields.get("patient_last_name")
     if first is not None and last is not None and first.raw_value and not last.raw_value and len(str(first.raw_value).split()) >= 2:
         # Possibly a full name in the first-name field. Hebrew names are ambiguous, so it is NOT split here.
