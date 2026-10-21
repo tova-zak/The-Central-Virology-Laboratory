@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 import { healthCheck, HealthResponse } from './services/api'
-import { UploadForm } from './features/upload/UploadForm'
+import { WorkflowScreen } from './features/workflow/WorkflowScreen'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { getHealthStatusLabel } from './utils/hebrewMessages'
 
 function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [lastBatchId, setLastBatchId] = useState<string | null>(null)
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -16,7 +17,7 @@ function App() {
         setHealth(data)
         setError(null)
       } catch (err) {
-        setError('שגיאה בחיבור ל-Backend')
+        setError('לא ניתן להתחבר לשרת.')
         console.error('Health check failed:', err)
       } finally {
         setLoading(false)
@@ -26,66 +27,55 @@ function App() {
     checkHealth()
   }, [])
 
-  const handleUploadSuccess = (batchId: string) => {
-    setLastBatchId(batchId)
-  }
-
   return (
-    <div className="app">
-      <h1>מערכת חילוץ התחייבויות - המעבדה המרכזית לנגיפים</h1>
-      
-      {loading && <p>בודק חיבור...</p>}
-      
-      {error && (
-        <div style={{ color: 'red', padding: '1rem', border: '1px solid red', borderRadius: '4px' }}>
-          <strong>שגיאה:</strong> {error}
-        </div>
-      )}
-      
-      {health && (
-        <div style={{ 
-          padding: '1rem', 
-          border: '1px solid green', 
-          borderRadius: '4px',
-          backgroundColor: '#f0fff0',
-          marginBottom: '2rem'
-        }}>
-          <h2>✅ המערכת פעילה</h2>
-          <ul style={{ textAlign: 'right', listStyle: 'none' }}>
-            <li><strong>שירות:</strong> {health.service}</li>
-            <li><strong>גרסה:</strong> {health.version}</li>
-            <li><strong>מודל AI:</strong> {health.model}</li>
-            <li><strong>סטטוס:</strong> {health.status}</li>
-          </ul>
-        </div>
-      )}
+    <ErrorBoundary>
+      <div className="app">
+        {/* Tzalul Header */}
+        <header className="tzalul-header">
+          <div className="tzalul-header-brand">
+            <img className="tzalul-logo" src="/logo.png" alt="" />
+            <div className="tzalul-header-text">
+              <h1 className="tzalul-header-title">המעבדה המרכזית לנגיפים</h1>
+              <p className="tzalul-header-subtitle">סביבת בדיקת נתונים · צלול</p>
+            </div>
+          </div>
+        </header>
 
-      {health && !loading && (
-        <>
-          <h2>העלאת קבצים</h2>
-          <UploadForm onUploadSuccess={handleUploadSuccess} />
-          
-          {lastBatchId && (
-            <div style={{ 
-              marginTop: '2rem',
-              padding: '1rem',
-              border: '1px solid #2196F3',
-              borderRadius: '4px',
-              backgroundColor: '#e3f2fd'
-            }}>
-              <p><strong>Batch ID האחרון:</strong> {lastBatchId}</p>
-              <p style={{ fontSize: '0.9em', color: '#666' }}>
-                (עיבוד יתווסף ב-TASK-013)
-              </p>
+        {/* Main Content */}
+        <main className="app-main">
+          {loading && (
+            <div className="status-box loading-box">
+              <p>בודק חיבור לשרת…</p>
             </div>
           )}
-        </>
-      )}
-      
-      <p style={{ marginTop: '2rem', color: '#666' }}>
-        מערכת MVP בשלבי פיתוח - Hackathon 2026
-      </p>
-    </div>
+          
+          {error && (
+            <div className="status-box error-box">
+              <strong>⚠ שגיאת חיבור:</strong> {error}
+              <p className="hint">בדקו שהשרת פועל ורעננו את הדף.</p>
+            </div>
+          )}
+          
+          {health && (
+            <>
+              <div className="status-box success-box">
+                <div className="status-content">
+                  <h3><span aria-hidden="true">✓</span> המערכת פעילה</h3>
+                  <div className="status-details">
+                    <span><strong>שירות:</strong> <bdi dir="ltr">{health.service}</bdi></span>
+                    <span><strong>גרסה:</strong> <bdi dir="ltr">{health.version}</bdi></span>
+                    <span><strong>מודל בינה מלאכותית:</strong> <bdi dir="ltr">{health.model}</bdi></span>
+                    <span><strong>מצב השרת:</strong> {getHealthStatusLabel(health.status)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <WorkflowScreen />
+            </>
+          )}
+        </main>
+      </div>
+    </ErrorBoundary>
   )
 }
 

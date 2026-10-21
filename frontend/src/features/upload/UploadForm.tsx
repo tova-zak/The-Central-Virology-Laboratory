@@ -3,6 +3,7 @@
  */
 import { useState } from 'react'
 import { uploadFiles } from '../../services/api'
+import { getErrorMessage } from '../../utils/hebrewMessages'
 import './UploadForm.css'
 
 export interface UploadFormProps {
@@ -25,7 +26,7 @@ export function UploadForm({ onUploadSuccess }: UploadFormProps) {
     event.preventDefault()
 
     if (!selectedFiles || selectedFiles.length === 0) {
-      setError('נא לבחור קובץ להעלאה')
+      setError('לא נבחרו קבצים. בחרו לפחות קובץ אחד.')
       return
     }
 
@@ -35,7 +36,8 @@ export function UploadForm({ onUploadSuccess }: UploadFormProps) {
 
     try {
       const response = await uploadFiles(selectedFiles)
-      setSuccess(`הועלו ${response.documents.length} קבצים בהצלחה (Batch ID: ${response.batch_id})`)
+      // \u2066...\u2069 isolates the ID as left-to-right inside the Hebrew sentence
+      setSuccess(`הועלו ${response.documents.length} קבצים. נוצרה קבוצת מסמכים: \u2066${response.batch_id}\u2069`)
       setSelectedFiles(null)
       
       if (onUploadSuccess) {
@@ -49,7 +51,7 @@ export function UploadForm({ onUploadSuccess }: UploadFormProps) {
       }
     } catch (err: any) {
       console.error('Upload failed:', err)
-      setError(err.response?.data?.detail || 'שגיאה בהעלאת קובץ')
+      setError(getErrorMessage(err, 'upload'))
     } finally {
       setUploading(false)
     }
@@ -61,7 +63,7 @@ export function UploadForm({ onUploadSuccess }: UploadFormProps) {
   return (
     <form onSubmit={handleSubmit} className="upload-form">
       <div className="form-group">
-        <label htmlFor="file-input">העלאת קבצים (PDF, PNG, JPEG):</label>
+        <label htmlFor="file-input">בחירת מסמכים להעלאה (PDF, PNG, JPEG). אפשר לבחור כמה קבצים: עד 10 קבצים, עד 20MB לכל קובץ.</label>
         <input
           id="file-input"
           type="file"
@@ -72,24 +74,25 @@ export function UploadForm({ onUploadSuccess }: UploadFormProps) {
         />
         {fileCount > 0 && (
           <p className="file-info">
-            נבחרו {fileCount} קבצים: {fileList}
+            נבחרו {fileCount} קבצים: <bdi dir="ltr">{fileList}</bdi>
           </p>
         )}
+        <p className="hint">לאחר ההעלאה תיווצר קבוצת מסמכים, ובשלב הבא תלחצו על „התחלת עיבוד”.</p>
       </div>
 
       <button type="submit" disabled={uploading || fileCount === 0}>
-        {uploading ? 'מעלה...' : 'העלה קובץ'}
+        {uploading ? 'מעלה…' : 'העלאת מסמכים'}
       </button>
 
       {error && (
         <div className="alert alert-error">
-          <strong>שגיאה:</strong> {error}
+          <strong>ההעלאה נכשלה:</strong> {error}
         </div>
       )}
 
       {success && (
         <div className="alert alert-success">
-          <strong>✓</strong> {success}
+          <strong aria-hidden="true">✓</strong> {success}
         </div>
       )}
     </form>

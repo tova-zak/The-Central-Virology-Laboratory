@@ -7,7 +7,7 @@
   padding: var(--space-8);
   direction: rtl;
   text-align: right;
-  background: var(--bg);
+  background: transparent;
   min-height: 100vh;
 }
 

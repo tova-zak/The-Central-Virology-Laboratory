@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import './RelationshipEditor.css';
 import { CommitmentRecord, Sample, FieldValue } from '../../services/api';
+import { getRelationshipStatusLabel } from '../../utils/hebrewMessages';
 
 interface RelationshipEditorProps {
   isOpen: boolean;
@@ -76,7 +77,7 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
 
   const handleResolve = () => {
     if (selectedCentralNumbers.length === 0) {
-      alert('אנא בחר לפחות מספר מרכזי אחד או נתק את הקשר');
+      alert('לא נבחר מספר מרכזי. בחרו לפחות מספר אחד, או לחצו על „ניתוק קשר”.');
       return;
     }
     
@@ -85,7 +86,7 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
   };
 
   const handleDisconnect = () => {
-    if (!window.confirm('האם לנתק את ההתחייבות מכל הדגימות?')) {
+    if (!window.confirm('לנתק את ההתחייבות מכל הדגימות?')) {
       return;
     }
     
@@ -114,8 +115,8 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
         aria-modal="true"
       >
         <div className="modal-header">
-          <h3 id="relationship-editor-title">פתרון קשר התחייבות-דגימות</h3>
-          <button className="close-button" onClick={handleCancel} aria-label="סגור">
+          <h3 id="relationship-editor-title">שיוך דגימות להתחייבות</h3>
+          <button className="close-button" onClick={handleCancel} aria-label="סגירה">
             ×
           </button>
         </div>
@@ -125,25 +126,25 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
           <div className="commitment-panel">
             <h4>התחייבות</h4>
             <div className="commitment-display">
-              <span className="commitment-number-display">{commitmentNumber}</span>
+              <span className="commitment-number-display" dir="auto">{commitmentNumber}</span>
               <span className="current-status">
-                {commitment.relationship_status === 'unresolved_relationship' && '⚠️ דורש ביקורת'}
-                {commitment.relationship_status === 'none' && '❌ לא משוייך'}
-                {commitment.relationship_status === 'explicit' && '✅ קשר מאומת'}
-                {commitment.relationship_status === 'inferred' && '✅ קשר מוסק'}
-                {!commitment.relationship_status && commitment.relation_status === 'ambiguous' && '⚠️ לא ברור (ישן)'}
+                {commitment.relationship_status === 'unresolved_relationship' && `⚠️ ${getRelationshipStatusLabel('unresolved_relationship')}`}
+                {commitment.relationship_status === 'none' && `❌ ${getRelationshipStatusLabel('none')}`}
+                {commitment.relationship_status === 'explicit' && `✅ ${getRelationshipStatusLabel('explicit')}`}
+                {commitment.relationship_status === 'inferred' && `✅ ${getRelationshipStatusLabel('inferred')}`}
+                {!commitment.relationship_status && commitment.relation_status === 'ambiguous' && '⚠️ קשר לא ברור'}
               </span>
             </div>
             <p className="helper-text">
-              בחר את המספרים המרכזיים (דגימות) המשויכים להתחייבות זו
+              סמנו את המספרים המרכזיים (הדגימות) ששייכים להתחייבות זו:
             </p>
           </div>
 
           {/* Samples Selection */}
           <div className="samples-panel">
-            <h4>דגימות זמינות ({samples.length})</h4>
+            <h4>דגימות בקבוצת המסמכים (<bdi dir="ltr">{samples.length}</bdi>)</h4>
             {samples.length === 0 ? (
-              <p className="empty-message">אין דגימות זמינות באצווה זו</p>
+              <p className="empty-message">אין דגימות בקבוצת מסמכים זו</p>
             ) : (
               <div className="samples-selection-list">
                 {samples.map((sample) => {
@@ -160,11 +161,11 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => handleToggleCentralNumber(centralNumber)}
-                        aria-label={`בחר דגימה ${centralNumber}`}
+                        aria-label={`בחירת דגימה ${centralNumber}`}
                       />
                       <div className="sample-info">
-                        <span className="sample-central">{centralNumber}</span>
-                        <span className="sample-date">{receivedDate}</span>
+                        <span className="sample-central"><bdi dir="ltr">{centralNumber}</bdi></span>
+                        <span className="sample-date"><bdi dir="ltr">{receivedDate}</bdi></span>
                       </div>
                     </label>
                   );
@@ -176,8 +177,8 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
           {/* Selection Summary */}
           {selectedCentralNumbers.length > 0 && (
             <div className="selection-summary">
-              <strong>נבחרו {selectedCentralNumbers.length} דגימות:</strong>
-              <span className="selected-items">{selectedCentralNumbers.join(', ')}</span>
+              <strong>נבחרו <bdi dir="ltr">{selectedCentralNumbers.length}</bdi> דגימות:</strong>
+              <span className="selected-items" dir="ltr">{selectedCentralNumbers.join(', ')}</span>
             </div>
           )}
         </div>
@@ -189,16 +190,16 @@ export const RelationshipEditor: React.FC<RelationshipEditorProps> = ({
           <button
             className="button-danger"
             onClick={handleDisconnect}
-            title="נתק התחייבות זו מכל הדגימות"
+            title="ניתוק ההתחייבות מכל הדגימות"
           >
-            נתק קשר
+            ניתוק קשר
           </button>
           <button
             className="button-primary"
             onClick={handleResolve}
             disabled={selectedCentralNumbers.length === 0}
           >
-            שייך לדגימות
+            שיוך לדגימות
           </button>
         </div>
       </div>

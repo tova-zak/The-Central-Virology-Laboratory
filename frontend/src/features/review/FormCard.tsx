@@ -9,6 +9,7 @@
 import React from 'react';
 import './FormCard.css';
 import { LogicalForm, Sample, CommitmentRecord, FieldValue } from '../../services/api';
+import { getRelationshipStatusLabel as getRelationshipLabel, getSegmentationLabel } from '../../utils/hebrewMessages';
 
 interface FormCardProps {
   form: LogicalForm;
@@ -90,13 +91,17 @@ const mapLegacyStatus = (legacy: 'clear' | 'ambiguous' | 'manual'): string => {
  */
 const getRelationshipStatusLabel = (commitment: CommitmentRecord): string => {
   const status = commitment.relationship_status || mapLegacyStatus(commitment.relation_status);
-  
-  if (status === 'explicit') return 'קשר מאומת';
-  if (status === 'inferred') return 'קשר מוסק';
-  if (status === 'unresolved_relationship') return 'דורש ביקורת';
-  if (status === 'none') return 'לא משוייך';
-  
-  return 'לא ברור';
+  return getRelationshipLabel(status);
+};
+
+/**
+ * Hebrew accessibility label for a field state color (display only)
+ */
+const getStateLabel = (color: string): string => {
+  if (color === 'red') return 'חסר או לא תקין';
+  if (color === 'orange') return 'דורש בדיקה';
+  if (color === 'green') return 'אושר ידנית';
+  return '';
 };
 
 export const FormCard: React.FC<FormCardProps> = ({
@@ -125,19 +130,20 @@ export const FormCard: React.FC<FormCardProps> = ({
     <div className="form-card" dir="rtl">
       <div className="form-card-header">
         <div className="form-title">
-          <h3>טופס {form.form_id}{pageRangeText}</h3>
-          <span className="segmentation-badge" title={`שיטת חלוקה: ${form.segmentation_method}`}>
-            {form.segmentation_method === 'page_notation' ? '📄 סימון עמוד' :
-             form.segmentation_method === 'heuristic' ? '🔍 היוריסטי' :
-             '📋 עמוד יחיד'}
+          <h3>טופס <bdi dir="ltr">{form.form_id}</bdi>{pageRangeText}</h3>
+          <span className="segmentation-badge" title={`אופן זיהוי גבולות הטופס: ${getSegmentationLabel(form.segmentation_method)}`}>
+            {form.segmentation_method === 'page_notation' ? '📄 ' :
+             form.segmentation_method === 'heuristic' ? '🔍 ' :
+             '📋 '}
+            {getSegmentationLabel(form.segmentation_method)}
           </span>
         </div>
         <button
           className="form-edit-btn"
           onClick={() => onEdit(form.form_id)}
-          aria-label={`ערוך טופס ${form.form_id}`}
+          aria-label={`עריכת טופס ${form.form_id}`}
         >
-          ✏️ ערוך
+          <span aria-hidden="true">✏️</span> עריכה
         </button>
       </div>
 
@@ -148,22 +154,22 @@ export const FormCard: React.FC<FormCardProps> = ({
           <div className={`info-field ${firstNameState.color}`}>
             <label>שם פרטי:</label>
             <span className="field-value">{firstName}</span>
-            {firstNameState.icon && <span className="field-icon" aria-label={firstNameState.color}>{firstNameState.icon === 'error' ? '❌' : '⚠️'}</span>}
+            {firstNameState.icon && <span className="field-icon" role="img" aria-label={getStateLabel(firstNameState.color)}>{firstNameState.icon === 'error' ? '❌' : firstNameState.icon === 'verified' ? '✅' : '⚠️'}</span>}
           </div>
           <div className={`info-field ${lastNameState.color}`}>
             <label>שם משפחה:</label>
             <span className="field-value">{lastName}</span>
-            {lastNameState.icon && <span className="field-icon" aria-label={lastNameState.color}>{lastNameState.icon === 'error' ? '❌' : '⚠️'}</span>}
+            {lastNameState.icon && <span className="field-icon" role="img" aria-label={getStateLabel(lastNameState.color)}>{lastNameState.icon === 'error' ? '❌' : lastNameState.icon === 'verified' ? '✅' : '⚠️'}</span>}
           </div>
           <div className={`info-field ${idNumberState.color}`}>
             <label>מספר זהות:</label>
             <span className="field-value">{idNumber}</span>
-            {idNumberState.icon && <span className="field-icon" aria-label={idNumberState.color}>{idNumberState.icon === 'error' ? '❌' : '⚠️'}</span>}
+            {idNumberState.icon && <span className="field-icon" role="img" aria-label={getStateLabel(idNumberState.color)}>{idNumberState.icon === 'error' ? '❌' : idNumberState.icon === 'verified' ? '✅' : '⚠️'}</span>}
           </div>
           <div className={`info-field ${senderState.color}`}>
             <label>גורם שולח:</label>
             <span className="field-value">{sender}</span>
-            {senderState.icon && <span className="field-icon" aria-label={senderState.color}>{senderState.icon === 'error' ? '❌' : '⚠️'}</span>}
+            {senderState.icon && <span className="field-icon" role="img" aria-label={getStateLabel(senderState.color)}>{senderState.icon === 'error' ? '❌' : senderState.icon === 'verified' ? '✅' : '⚠️'}</span>}
           </div>
         </div>
       </div>
@@ -172,7 +178,7 @@ export const FormCard: React.FC<FormCardProps> = ({
       <div className="form-section">
         <h4 className="section-title">דגימות ({samples.length})</h4>
         {samples.length === 0 ? (
-          <p className="empty-message">אין דגימות משוייכות</p>
+          <p className="empty-message">אין דגימות משויכות לטופס</p>
         ) : (
           <ul className="samples-list" role="list">
             {samples.map((sample) => {
@@ -194,7 +200,7 @@ export const FormCard: React.FC<FormCardProps> = ({
       <div className="form-section">
         <h4 className="section-title">התחייבויות ({commitments.length})</h4>
         {commitments.length === 0 ? (
-          <p className="empty-message">אין התחייבויות משוייכות</p>
+          <p className="empty-message">אין התחייבויות משויכות לטופס</p>
         ) : (
           <ul className="commitments-list" role="list">
             {commitments.map((commitment) => {
@@ -205,7 +211,7 @@ export const FormCard: React.FC<FormCardProps> = ({
 
               return (
                 <li key={commitment.commitment_record_id} className="commitment-item">
-                  <span className="commitment-number">{commitmentNumber}</span>
+                  <span className="commitment-number" dir="auto">{commitmentNumber}</span>
                   <span
                     className={`relationship-status status-${statusColor}`}
                     role="status"
@@ -220,9 +226,9 @@ export const FormCard: React.FC<FormCardProps> = ({
                     <button
                       className="resolve-btn"
                       onClick={() => onResolveRelationship(commitment.commitment_record_id)}
-                      aria-label={`פתור קשר עבור התחייבות ${commitmentNumber}`}
+                      aria-label={`שיוך דגימות להתחייבות ${commitmentNumber}`}
                     >
-                      🔗 פתור
+                      <span aria-hidden="true">🔗</span> שיוך דגימות
                     </button>
                   )}
                 </li>
@@ -235,8 +241,8 @@ export const FormCard: React.FC<FormCardProps> = ({
       {/* Confidence indicator (optional footer) */}
       {form.segmentation_confidence < 0.8 && (
         <div className="form-card-footer">
-          <span className="confidence-warning" title={`רמת ודאות: ${(form.segmentation_confidence * 100).toFixed(0)}%`}>
-            ⚠️ חלוקה בוודאות נמוכה - מומלץ בדיקה ידנית
+          <span className="confidence-warning" title={`רמת ודאות: ${(form.segmentation_confidence * 100).toFixed(0)}%\u200E`}>
+            <span aria-hidden="true">⚠️</span> זיהוי גבולות הטופס אינו ודאי. מומלץ לבדוק מול המסמך.
           </span>
         </div>
       )}
