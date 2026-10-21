@@ -43,6 +43,16 @@ def test_invalid_israeli_id():
     assert "empty" in issue.message.lower()
 
 
+def test_all_zero_israeli_id_rejected():
+    """000000000 satisfies the checksum but is not a valid ID."""
+    for value in ("000000000", "0", "00000000", "000-000-000"):
+        issue = validate_id_number(value)
+        assert issue is not None, value
+        assert issue.field_name == "patient_id_number"
+        assert issue.severity == "error"
+        assert "zeros" in issue.message.lower()
+
+
 def test_israeli_id_with_leading_zeros():
     """Test that leading zeros are preserved and handled correctly."""
     # ID with leading zero

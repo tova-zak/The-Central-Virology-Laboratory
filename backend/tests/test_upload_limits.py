@@ -7,31 +7,26 @@ from app.main import app
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _no_upload_rate_limit(monkeypatch):
+    """The shared module-level app keeps one in-memory upload rate window (default 6/min)
+    across tests; lift it here so these size/count tests are order independent."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "upload_requests_per_minute", 1000)
+
+
 def create_fake_png(size_bytes: int) -> BytesIO:
-    """Create a fake PNG file with valid magic bytes.
-    
-    Uses PNG header + minimal valid structure to pass magic byte check
-    without creating actual large images.
+    """Create a genuinely decodable 1x1 PNG, padded with trailing bytes to size_bytes.
+
+    The upload endpoint decodes images (PIL verify + PDF wrap), so a hand-written
+    header with an invalid IDAT is rejected with 400 before the limits under test.
     """
-    # PNG signature
-    png_header = b'\x89PNG\r\n\x1a\n'
-    # IHDR chunk (minimal valid PNG)
-    ihdr = b'\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde'
-    # IDAT chunk (minimal data)
-    idat = b'\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4'
-    # IEND chunk
-    iend = b'\x00\x00\x00\x00IEND\xaeB`\x82'
-    
-    base_content = png_header + ihdr + idat + iend
-    
-    # Pad to desired size if needed
-    if size_bytes > len(base_content):
-        # Add padding after IDAT, before IEND
-        padding = b'\x00' * (size_bytes - len(base_content))
-        content = png_header + ihdr + idat + padding + iend
-    else:
-        content = base_content
-    
+    from PIL import Image
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), "white").save(buffer, "PNG")
+    content = buffer.getvalue()
+    if size_bytes > len(content):
+        content += b'\x00' * (size_bytes - len(content))  # trailing bytes after IEND
     return BytesIO(content)
 
 
