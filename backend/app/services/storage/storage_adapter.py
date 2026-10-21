@@ -148,6 +148,21 @@ class SupabaseStorageAdapter:
         result = self.client.table("batches").select("batch_id").execute()
         return [row["batch_id"] for row in result.data]
     
+    def iter_batch_rows(self, chunk_size: int = 50):
+        """Read-only: yield (batch_id, created_at, batch_data) newest first (created_at desc,
+        batch_id desc), fetching bounded chunks so memory stays bounded and ALL batches are visited."""
+        offset = 0
+        while True:
+            result = (self.client.table("batches").select("batch_id,batch_data,created_at")
+                      .order("created_at", desc=True).order("batch_id", desc=True)
+                      .range(offset, offset + chunk_size - 1).execute())
+            rows = result.data or []
+            for row in rows:
+                yield row["batch_id"], str(row.get("created_at") or ""), row.get("batch_data") or {}
+            if len(rows) < chunk_size:
+                return
+            offset += chunk_size
+
     def delete_batch(self, batch_id: str) -> bool:
         """Delete batch from Supabase."""
         result = self.client.table("batches").delete().eq("batch_id", batch_id).execute()

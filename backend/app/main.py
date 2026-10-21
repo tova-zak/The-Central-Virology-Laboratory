@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.access import require_access
-from app.api import upload, process, documents
+from app.api import upload, process, documents, history
 from app.services.storage.storage_adapter import StorageConflict
 from app.core.request_limits import RequestLimits
 
@@ -64,7 +64,8 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                    allow_headers=["Content-Type", "Authorization"])
 
 
-for router in (upload.router, process.router, documents.router):
+# history first: static /batches/history must win over /batches/{batch_id}
+for router in (history.router, upload.router, process.router, documents.router):
     app.include_router(router, dependencies=[Depends(require_access)])
 
 
