@@ -8,7 +8,7 @@ services:
     rootDir: backend
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    branch: integration/final-mvp
+    branch: main
     plan: free
     region: frankfurt
     healthCheckPath: /ready
@@ -61,7 +61,7 @@ services:
   - type: web
     name: virology-lab-staging-frontend
     runtime: static
-    branch: integration/final-mvp
+    branch: main
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: ./dist
