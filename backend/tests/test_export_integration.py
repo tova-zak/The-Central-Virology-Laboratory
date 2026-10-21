@@ -1,264 +1,100 @@
-"""Integration tests for Excel export functionality.
+"""Integration tests for Excel export (commitment_records model, offline).
 
-Tests the complete export flow from button click to file download.
+Storage is a JSONStorage under a pytest temp dir patched into app.api.process; no Supabase, no network.
 """
 import pytest
-from pathlib import Path
 from fastapi.testclient import TestClient
-from app.main import app
+
+from app.api import process
+from app.domain.models import CommitmentRecord, ExtractionState, FieldValue, ReviewState
 from app.services.storage import JSONStorage
-from app.domain.models import TestRecord, CommitmentRecord, FieldValue, ExtractionState, ReviewState
-
-client = TestClient(app)
 
 
-def test_export_blocked_when_uncertain_field_not_resolved():
-    """Test that export endpoint blocks when uncertain field is not human_verified."""
-    # Create test batch with uncertain field
-    batch_id = "test_batch_export_blocked"
-    storage = JSONStorage(base_path=Path("temp"))
-    
-    batch_data = {
+def _field(value, verified=True):
+    return FieldValue(
+        raw_value=value,
+        normalized_value=value,
+        extraction_state=ExtractionState.found,
+        review_state=ReviewState.human_verified if verified else ReviewState.pending,
+    )
+
+
+def _record(record_id="rec_001", unreviewed=()):
+    values = dict(
+        patient_first_name="FIRST_01",
+        patient_last_name="LAST_01",
+        patient_id_number="000000018",
+        sender="SENDER_PLACEHOLDER",
+        received_date="01/01/2026",
+        central_numbers=["100001"],
+        commitment_number="200001",
+    )
+    fields = {name: _field(value, name not in unreviewed) for name, value in values.items()}
+    return CommitmentRecord(
+        commitment_record_id=record_id, form_id=f"{record_id}_page_1",
+        status="complete", relationship_status="inferred", **fields,
+    )
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    from app.main import app
+    storage = JSONStorage(base_path=tmp_path)
+    monkeypatch.setattr(process, "_storage", storage)
+    monkeypatch.setattr(process.settings, "temp_storage_path", str(tmp_path))
+    return TestClient(app), storage
+
+
+def _save(storage, record, batch_id):
+    storage.save_batch(batch_id, {
         "batch_id": batch_id,
         "status": "completed",
-        "test_records": [
-            {
-                "test_id": "test_001",
-                "document_id": "doc_001",
-                "page_indices": [0],
-                "patient_first_name": {
-                    "raw_value": "ישראל",
-                    "normalized_value": "ישראל",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "patient_last_name": {
-                    "raw_value": "ישראלי",
-                    "normalized_value": "ישראלי",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "patient_id_number": {
-                    "raw_value": "123456789",
-                    "normalized_value": "123456789",
-                    "reviewed_value": None,
-                    "extraction_state": "uncertain",  # BLOCKER
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "sender": {
-                    "raw_value": "מעבדה",
-                    "normalized_value": "מעבדה",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "received_date": {
-                    "raw_value": "2024-01-01",
-                    "normalized_value": "2024-01-01",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "central_numbers": {
-                    "raw_value": ["12345"],
-                    "normalized_value": ["12345"],
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "commitment_ids": []
-            }
-        ],
-        "commitment_records": []
-    }
-    
-    storage.save_batch(batch_id, batch_data)
-    
-    # Try to export - should be blocked
-    response = client.post(f"/api/batches/{batch_id}/export")
-    
+        "test_records": [],
+        "commitment_records": [record.model_dump(mode="json")],
+    })
+    return batch_id
+
+
+def test_export_blocked_when_uncertain_field_not_resolved(client):
+    """Export is blocked while a field is not human_verified."""
+    http, storage = client
+    batch_id = _save(storage, _record(unreviewed=("patient_id_number",)), "test_batch_export_blocked")
+
+    response = http.post(f"/api/batches/{batch_id}/export")
+
     assert response.status_code == 400
-    assert "Export blocked" in response.json()["detail"]["message"]
-    assert len(response.json()["detail"]["problematic_records"]) == 1
-    assert "patient_id_number" in response.json()["detail"]["problematic_records"][0]["issues"]
+    detail = response.json()["detail"]
+    assert "Export blocked" in detail["message"]
+    assert "rec_001: patient_id_number_unreviewed" in detail["blockers"]
 
 
-def test_export_succeeds_after_human_verification():
-    """Test that export works after all uncertain fields are human_verified."""
-    batch_id = "test_batch_export_success"
-    storage = JSONStorage(base_path=Path("temp"))
-    
-    batch_data = {
-        "batch_id": batch_id,
-        "status": "completed",
-        "test_records": [
-            {
-                "test_id": "test_002",
-                "document_id": "doc_002",
-                "page_indices": [0],
-                "patient_first_name": {
-                    "raw_value": "שרה",
-                    "normalized_value": "שרה",
-                    "reviewed_value": "שרה",
-                    "extraction_state": "found",
-                    "review_state": "human_verified",
-                    "validation_issues": []
-                },
-                "patient_last_name": {
-                    "raw_value": "כהן",
-                    "normalized_value": "כהן",
-                    "reviewed_value": "כהן",
-                    "extraction_state": "found",
-                    "review_state": "human_verified",
-                    "validation_issues": []
-                },
-                "patient_id_number": {
-                    "raw_value": "987654321",
-                    "normalized_value": "987654321",
-                    "reviewed_value": "987654321",
-                    "extraction_state": "uncertain",  # WAS uncertain
-                    "review_state": "human_verified",  # BUT now verified
-                    "validation_issues": []
-                },
-                "sender": {
-                    "raw_value": "מרכז רפואי",
-                    "normalized_value": "מרכז רפואי",
-                    "reviewed_value": "מרכז רפואי",
-                    "extraction_state": "found",
-                    "review_state": "human_verified",
-                    "validation_issues": []
-                },
-                "received_date": {
-                    "raw_value": "2024-02-20",
-                    "normalized_value": "2024-02-20",
-                    "reviewed_value": "2024-02-20",
-                    "extraction_state": "found",
-                    "review_state": "human_verified",
-                    "validation_issues": []
-                },
-                "central_numbers": {
-                    "raw_value": ["67890"],
-                    "normalized_value": ["67890"],
-                    "reviewed_value": ["67890"],
-                    "extraction_state": "found",
-                    "review_state": "human_verified",
-                    "validation_issues": []
-                },
-                "commitment_ids": []
-            }
-        ],
-        "commitment_records": []
-    }
-    
-    storage.save_batch(batch_id, batch_data)
-    
-    # Export should succeed now
-    response = client.post(f"/api/batches/{batch_id}/export")
-    
+def test_export_succeeds_after_human_verification(client):
+    """Export works once every field is human_verified."""
+    http, storage = client
+    batch_id = _save(storage, _record(), "test_batch_export_success")
+
+    response = http.post(f"/api/batches/{batch_id}/export")
+
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert "commitments_" in response.headers["content-disposition"]
-    assert len(response.content) > 0  # Excel file has content
+    assert len(response.content) > 0
 
 
-def test_export_check_endpoint_separate_from_export():
-    """Test that export-check endpoint does not trigger actual export."""
-    batch_id = "test_batch_check"
-    storage = JSONStorage(base_path=Path("temp"))
-    
-    batch_data = {
-        "batch_id": batch_id,
-        "status": "completed",
-        "test_records": [
-            {
-                "test_id": "test_003",
-                "document_id": "doc_003",
-                "page_indices": [0],
-                "patient_first_name": {
-                    "raw_value": "דוד",
-                    "normalized_value": "דוד",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "patient_last_name": {
-                    "raw_value": "לוי",
-                    "normalized_value": "לוי",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "patient_id_number": {
-                    "raw_value": "111222333",
-                    "normalized_value": "111222333",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "sender": {
-                    "raw_value": "בית חולים",
-                    "normalized_value": "בית חולים",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "received_date": {
-                    "raw_value": "2024-03-10",
-                    "normalized_value": "2024-03-10",
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "central_numbers": {
-                    "raw_value": ["11111"],
-                    "normalized_value": ["11111"],
-                    "reviewed_value": None,
-                    "extraction_state": "found",
-                    "review_state": "pending",
-                    "validation_issues": []
-                },
-                "commitment_ids": []
-            }
-        ],
-        "commitment_records": []
-    }
-    
-    storage.save_batch(batch_id, batch_data)
-    
-    # Call export-check (GET endpoint)
-    response = client.get(f"/api/batches/{batch_id}/export-check")
-    
-    # Should return JSON, not Excel file
+def test_export_check_endpoint_separate_from_export(client, tmp_path):
+    """export-check reports eligibility as JSON and never creates an export file."""
+    http, storage = client
+    blocked = _save(storage, _record("rec_blocked", unreviewed=("sender",)), "test_batch_check_blocked")
+    ready = _save(storage, _record("rec_ready"), "test_batch_check_ready")
+
+    response = http.get(f"/api/batches/{blocked}/export-check")
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/json"
-    assert "can_export" in response.json()
-    assert response.json()["can_export"] == True  # All fields are valid
-    
-    # Verify no Excel file was created (export-check should not create files)
-    batch_dir = Path("temp") / batch_id
-    if batch_dir.exists():
-        export_files = list(batch_dir.glob("*_export.xlsx"))
-        # If files exist from previous export test, that's ok, but count should not increase
-        initial_count = len(export_files)
-    
-    # Call export-check again
-    response2 = client.get(f"/api/batches/{batch_id}/export-check")
-    assert response2.status_code == 200
-    
-    # Verify still no new files created
-    if batch_dir.exists():
-        export_files_after = list(batch_dir.glob("*_export.xlsx"))
-        assert len(export_files_after) == initial_count  # No new files
+    assert response.json()["can_export"] is False
+    assert "rec_blocked: sender_unreviewed" in response.json()["blockers"]
+
+    response = http.get(f"/api/batches/{ready}/export-check")
+    assert response.status_code == 200
+    assert response.json() == {"can_export": True, "blockers": []}
+
+    assert list(tmp_path.rglob("*_export.xlsx")) == []
