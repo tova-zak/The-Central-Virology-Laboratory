@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from enum import Enum
 
-from app.domain.models import FieldValue, ExtractionState, ReviewState
+from app.domain.models import FieldValue, FieldCandidate, ExtractionState, ReviewState
 from app.services.extraction.extractor import Extractor, ExtractionResult
 
 
@@ -76,6 +76,10 @@ class RetryConfig:
             self.max_retries_per_field > 0 and 
             self.daily_retry_quota > 0
         )
+
+
+def _has_value(value) -> bool:
+    return value not in (None, "", []) and not (isinstance(value, str) and not value.strip())
 
 
 class FocusedRetryOrchestrator:
@@ -343,27 +347,38 @@ class FocusedRetryOrchestrator:
             field_value: Current FieldValue to update
             retry_result: Result from focused retry
         """
+        # A human decision is final: automated retries never touch it (no value, state or counter change).
+        if getattr(field_value, 'review_state', None) == ReviewState.human_verified or _has_value(
+            getattr(field_value, 'reviewed_value', None)
+        ):
+            logger.info(f"Focused retry result for '{field_name}' ignored: field is human reviewed")
+            return
         # Extract new value from retry result
         new_value = retry_result.fields.get(field_name)
-        
-        # Update only if new value is not None (improvement)
-        if new_value is not None:
-            # Update raw_value with retry result
-            field_value.raw_value = new_value
-            field_value.extraction_state = ExtractionState.found
-            
-            # Record provenance
-            retry_count = getattr(field_value, 'retry_count', 0)
-            field_value.retry_count = retry_count + 1  # type: ignore
-            
-            logger.info(
-                f"Updated '{field_name}' from focused retry (attempt #{field_value.retry_count}): '{new_value}'"
-            )
-        else:
+        retry_count = getattr(field_value, 'retry_count', 0)
+        field_value.retry_count = retry_count + 1  # type: ignore
+        if not _has_value(new_value):
             # Retry didn't find value either - increment counter but don't change state
-            retry_count = getattr(field_value, 'retry_count', 0)
-            field_value.retry_count = retry_count + 1  # type: ignore
-            
             logger.info(
                 f"Focused retry #{field_value.retry_count} for '{field_name}' still found no value"
             )
+            return
+        current = [getattr(field_value, k, None) for k in ('raw_value', 'normalized_value')]
+        if any(_has_value(v) for v in current):
+            # A value already exists: never replace it. Offer the retry reading as a review candidate only.
+            if str(new_value) not in [str(v) for v in current if _has_value(v)]:
+                candidate = FieldCandidate(value=str(new_value), reason="retry_alternative")
+                if candidate not in field_value.candidates:
+                    field_value.candidates.append(candidate)
+                field_value.extraction_state = ExtractionState.uncertain
+                field_value.review_state = ReviewState.needs_review
+            logger.info(f"Focused retry for '{field_name}' kept the existing value; alternative stored as candidate")
+            return
+        # Empty field: fill it, but a retry result is never confident until a human verifies it.
+        field_value.raw_value = new_value
+        field_value.normalized_value = new_value
+        field_value.extraction_state = ExtractionState.uncertain
+        field_value.review_state = ReviewState.needs_review
+        logger.info(
+            f"Updated '{field_name}' from focused retry (attempt #{field_value.retry_count}): '{new_value}'"
+        )

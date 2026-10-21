@@ -54,6 +54,7 @@ class ValidationIssue(BaseModel):
     severity: str  # "error" | "warning"
     message: str
     suggested_fix: Optional[str] = None
+    code: Optional[str] = None  # machine-readable issue kind, e.g. "century_inferred"
 
 
 class EvidenceRef(BaseModel):

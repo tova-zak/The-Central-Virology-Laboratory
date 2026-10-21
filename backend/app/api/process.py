@@ -295,13 +295,16 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
             )
     
     if field_name == "received_date" and isinstance(new_value, str) and new_value.strip():
-        # A reviewer must supply a complete, real date: a two-digit year is never accepted or guessed.
+        # A reviewer may type a four-digit year, or a two-digit year read under the 2000+YY policy (stored as
+        # the 4-digit value). Impossible dates, unrecognized text and a two-digit year landing in the future
+        # (e.g. 99 -> 2099) are rejected; an explicit four-digit future date keeps its previous behavior.
         from app.services.validation.date_normalizer import assess_date
         assessment = assess_date(new_value)
-        if assessment.status in ("ambiguous_year", "invalid_date", "unrecognized"):
+        if (assessment.status in ("invalid_date", "unrecognized")
+                or (assessment.status == "future" and assessment.century_inferred)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Enter a complete valid date with a four-digit year (for example 15/03/2024)"
+                detail="Enter a valid date (for example 15/03/2024); a two-digit year is read as 20YY"
             )
         new_value = assessment.normalized or new_value
     if field_name == "commitment_number":
@@ -313,6 +316,11 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
                     candidate["status"] = "rejected"
     field["reviewed_value"] = new_value
     field["review_state"] = "human_verified"
+    if field_name == "received_date":
+        # The human action replaces the automated inference: clear the century flag and the stale notes.
+        _clear_century_inferred(field)
+        if "commitment_record_id" in test_record_dict:
+            field["extraction_state"] = "found"
     
     # Re-validate if it was invalid before
     if "commitment_record_id" not in test_record_dict and field["extraction_state"] == "invalid":
@@ -368,6 +376,13 @@ async def reject_field_candidate(batch_id: str, test_id: str, field_name: str, b
     return {"field": field, "can_export": can_export, "blockers": blockers}
 
 
+def _clear_century_inferred(field: dict) -> None:
+    """Drop the automated 'century inferred' flag and its note once a human has confirmed or typed the date."""
+    field["validation_issues"] = [i for i in (field.get("validation_issues") or [])
+                                  if not (i.get("code") == "century_inferred" or str(i.get("message", "")).startswith("Century inferred"))]
+    field["extraction_notes"] = [n for n in (field.get("extraction_notes") or []) if not str(n).startswith("Two-digit year")]
+
+
 @router.post("/batches/{batch_id}/tests/{test_id}/fields/{field_name}/verify")
 async def verify_field(batch_id: str, test_id: str, field_name: str):
     """Mark a field as human verified without changing its value.
@@ -408,11 +423,14 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
     field = test_record_dict[field_name]
     if field_name == "received_date":
         from app.services.validation.date_normalizer import assess_date
-        effective = next((field.get(k) for k in ("reviewed_value", "normalized_value", "raw_value") if field.get(k)), None)
-        if effective and assess_date(effective).status in ("ambiguous_year", "invalid_date", "unrecognized"):
+        # Assess the reviewed value when present, else the ORIGINAL text so a century inference stays visible.
+        effective = next((field.get(k) for k in ("reviewed_value", "raw_value", "normalized_value") if field.get(k)), None)
+        date_assessment = assess_date(effective) if effective else None
+        if date_assessment and (date_assessment.status in ("invalid_date", "unrecognized")
+                                or (date_assessment.status == "future" and date_assessment.century_inferred)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This date cannot be approved as is; enter a complete valid date with a four-digit year"
+                detail="This date cannot be approved as is; enter a valid date (a two-digit year is read as 20YY)"
             )
     if field_name in ['patient_id_number', 'central_numbers']:
         # Check if the field is empty
@@ -433,6 +451,14 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
                 detail=f"Field {field_name} cannot be confirmed empty (required by policy)"
             )
     
+    # Approving a century-inferred date records the human verification of the normalized 4-digit value,
+    # so it is stored as the reviewed value (an already human-verified field is left untouched).
+    if (field_name == "received_date" and field.get("review_state") != "human_verified"
+            and not field.get("reviewed_value") and date_assessment and date_assessment.century_inferred):
+        field["reviewed_value"] = date_assessment.normalized
+        _clear_century_inferred(field)
+        field["extraction_state"] = "found"
+
     # Mark as verified
     field["review_state"] = "human_verified"
     
@@ -474,8 +500,35 @@ async def check_export_eligibility(batch_id: str):
     }
 
 
+_PLACEHOLDER_TOKENS = frozenset({"null", "none", "n/a", "na", "unknown", "-", "?", "לא קריא", "לא ידוע", "אין"})
+
+
+def _clean_scalar(value):
+    """Return the stripped text, or None when the value is blank or a filler token (never a guess)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in _PLACEHOLDER_TOKENS:
+        return None
+    return text
+
+
+def _clean_list(values) -> list:
+    """Stringify, strip and drop blank/filler items. Keeps order, leading zeros and every distinct number."""
+    if values is None:
+        return []
+    if not isinstance(values, (list, tuple)):
+        values = [values]
+    cleaned = []
+    for item in values:
+        text = _clean_scalar(item)
+        if text is not None and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
 def _map_extraction_to_test_record(extraction_result, document_id: str, page_index: int) -> TestRecord:
-    """Map Gemini extraction result to TestRecord."""
+    """Map Gemini extraction result to TestRecord. Blank or filler values stay empty (state missing)."""
     test_id = f"test_{uuid.uuid4().hex[:12]}"
     
     record = TestRecord(
@@ -484,7 +537,11 @@ def _map_extraction_to_test_record(extraction_result, document_id: str, page_ind
         page_indices=[page_index]
     )
     
-    fields = extraction_result.fields
+    fields = {
+        **extraction_result.fields,
+        **{name: _clean_scalar(extraction_result.fields.get(name))
+           for name in ("patient_first_name", "patient_last_name", "patient_id_number", "sender", "received_date")},
+    }
     
     # Map fields (handle None → missing)
     record.patient_first_name = FieldValue[str](
@@ -528,7 +585,7 @@ def _map_extraction_to_test_record(extraction_result, document_id: str, page_ind
     )
     
     # Multi-value fields
-    central_nums = fields.get("central_numbers", [])
+    central_nums = _clean_list(fields.get("central_numbers"))
     record.central_numbers = FieldValue[list[str]](
         raw_value=central_nums,
         normalized_value=central_nums,
@@ -559,9 +616,14 @@ def _detect_uncertainty(test_record: TestRecord, extraction_result):
                     field.extraction_state = ExtractionState.uncertain
                     field.review_state = ReviewState.needs_review
     
-    # Check central_numbers
+    # Check central_numbers (missing stays flagged; a warning naming the field makes it uncertain, never found)
     if test_record.central_numbers.extraction_state == ExtractionState.missing:
         test_record.central_numbers.review_state = ReviewState.needs_review
+    for warning in warnings or []:
+        if "central_numbers" in str(warning).lower():
+            if test_record.central_numbers.extraction_state == ExtractionState.found:
+                test_record.central_numbers.extraction_state = ExtractionState.uncertain
+            test_record.central_numbers.review_state = ReviewState.needs_review
 
 
 def _validate_record(test_record: TestRecord):
@@ -575,7 +637,11 @@ def _validate_record(test_record: TestRecord):
             test_record.patient_id_number.validation_issues.append(issue)
     
     # Validate date
-    if test_record.received_date.normalized_value:
+    # (a human-reviewed date is never re-assessed or re-flagged by automation)
+    if test_record.received_date.normalized_value and not (
+        test_record.received_date.review_state == ReviewState.human_verified
+        or test_record.received_date.reviewed_value is not None
+    ):
         normalized_date, issue = validator.assess_date(
             test_record.received_date.raw_value or test_record.received_date.normalized_value
         )
@@ -587,6 +653,10 @@ def _validate_record(test_record: TestRecord):
             )
             test_record.received_date.review_state = ReviewState.needs_review
             test_record.received_date.validation_issues.append(issue)
+            if issue.code == "century_inferred":
+                note = "Two-digit year: century inferred as 20YY; confirm"
+                if note not in test_record.received_date.extraction_notes:
+                    test_record.received_date.extraction_notes.append(note)
 
 
 def _merge_multi_page_extractions(
@@ -619,12 +689,15 @@ def _merge_multi_page_extractions(
     
     # Merge fields
     merged_fields = {}
+    conflict_warnings = []
     
     # Patient info: prefer page 0, fallback to page 1 if page 0 missing
     for field in ['patient_first_name', 'patient_last_name', 'patient_id_number', 'sender', 'received_date']:
         val0 = page0_result.fields.get(field)
         val1 = page1_result.fields.get(field)
         merged_fields[field] = val0 if val0 else val1
+        if val0 and val1 and str(val0).strip() != str(val1).strip():
+            conflict_warnings.append(f"{field}: conflicting values across pages ({val0} vs {val1})")
     
     # Central numbers: UNION + deduplicate
     central0 = set(page0_result.fields.get('central_numbers', []))
@@ -650,7 +723,7 @@ def _merge_multi_page_extractions(
     # Warnings: concatenate
     warnings0 = page0_result.warnings or []
     warnings1 = page1_result.warnings or []
-    merged_warnings = warnings0 + [f"(page {page1_index+1}) {w}" for w in warnings1]
+    merged_warnings = warnings0 + [f"(page {page1_index+1}) {w}" for w in warnings1] + conflict_warnings
     
     # Create merged ExtractionResult
     merged_extraction = ExtractionResult(

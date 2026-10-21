@@ -5,7 +5,8 @@
  * Rules enforced here:
  *  - a candidate is only a suggestion; nothing in this file marks anything verified;
  *  - a field that is already human_verified shows no candidate actions;
- *  - an ambiguous two-digit-year date can never be approved as is.
+ *  - a two-digit-year date is read as 20YY (backend policy 2000+YY), is always flagged as an inferred century,
+ *    and is only accepted after a human confirms or types it.
  */
 
 export interface EvidenceCandidate {
@@ -21,7 +22,7 @@ export interface EvidenceField {
   reviewed_value?: unknown;
   extraction_state?: string;
   review_state?: string;
-  validation_issues?: { severity?: string; message?: string }[];
+  validation_issues?: { severity?: string; message?: string; code?: string | null }[];
   candidates?: EvidenceCandidate[];
   extraction_notes?: string[];
 }
@@ -32,7 +33,7 @@ const REASON_LABELS: Record<string, string> = {
   ambiguous_label: 'התווית אינה חד-משמעית',
   sample_label_requires_leumit: 'תווית "דגימה" מתקבלת רק עבור לאומית',
   overlaps_central_number: 'זהה למספר מרכזי',
-  ambiguous_two_digit_year: 'שנה אפשרית (לא נקבעה אוטומטית)',
+  century_inferred: 'השנה נקראה בספרתיים בלבד ופוענחה כ-20YY - יש לאשר או לתקן',
   possible_full_name_in_first_name_field: 'ייתכן שזה שם מלא (לא פוצל אוטומטית)',
 };
 
@@ -114,24 +115,31 @@ export function exportableCommitmentCount(field?: EvidenceField | null): number 
   return numbers.size;
 }
 
-/** True when the date has a two-digit year, so the century is unknown. */
-export function isAmbiguousYearDate(field?: EvidenceField | null): boolean {
+/** True when the date has a two-digit year, so its century (20YY) was inferred and awaits human confirmation. */
+export function isCenturyInferredDate(field?: EvidenceField | null): boolean {
   if (!field || isHumanVerified(field)) return false;
   const original = typeof field.raw_value === 'string' ? field.raw_value : '';
   if (TWO_DIGIT_YEAR.test(original)) return true;
-  return (field.validation_issues ?? []).some(issue => (issue.message ?? '').startsWith('Ambiguous two-digit year'));
+  return (field.validation_issues ?? []).some(
+    issue => issue.code === 'century_inferred' || (issue.message ?? '').startsWith('Century inferred'),
+  );
 }
+
+/** Backward-compatible name for isCenturyInferredDate. */
+export const isAmbiguousYearDate = isCenturyInferredDate;
 
 export function isCompleteDate(text: unknown): boolean {
   return typeof text === 'string' && COMPLETE_DATE.test(text);
 }
 
-/** Approving the value unchanged is not allowed for an ambiguous date. */
+/**
+ * Approving the value unchanged is allowed for a century-inferred date only when its normalized value is a
+ * complete 4-digit date (the backend stores that value on approval). Unrecognized or incomplete dates cannot be approved.
+ */
 export function canApproveAsIs(fieldName: string, field?: EvidenceField | null): boolean {
   if (fieldName === 'received_date') {
     const value = effectiveValue(field);
-    if (isAmbiguousYearDate(field)) return false;
-    if (typeof value === 'string' && TWO_DIGIT_YEAR.test(value)) return false;
+    if (typeof value === 'string' && value.trim() && !isCompleteDate(value)) return false;
   }
   return true;
 }
@@ -139,7 +147,9 @@ export function canApproveAsIs(fieldName: string, field?: EvidenceField | null):
 /** Validator for the edit dialog: returns an error message or null. */
 export function validateEditedValue(fieldName: string, value: unknown): string | null {
   if (fieldName === 'received_date' && typeof value === 'string' && value.trim()) {
-    return isCompleteDate(value) ? null : 'יש להזין תאריך מלא עם שנה בת 4 ספרות, למשל 15/03/2024';
+    return isCompleteDate(value) || TWO_DIGIT_YEAR.test(value)
+      ? null
+      : 'יש להזין תאריך מלא, למשל 15/03/2024 (שנה בת 2 ספרות תיקרא כ-20YY)';
   }
   return null;
 }
