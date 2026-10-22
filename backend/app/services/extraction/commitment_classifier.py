@@ -89,6 +89,12 @@ def classify_commitments(commitment_numbers, commitment_types, central_numbers, 
             result.warnings.append("commitment_numbers: \x27%s\x27 also appears in central_numbers, excluded" % number)
             candidate(number, label, "overlaps_central_number")
             continue
+        if number not in labels:
+            # The model listed the number as a commitment but sent no label metadata for it (not a contradicting
+            # label such as "בדיקה"). Keep it instead of dropping it, but warn so the reviewer confirms it.
+            accept(number)
+            result.warnings.append("commitment_numbers: \x27%s\x27 was listed without label details; accepted, verify the label" % number)
+            continue
         canonical, status = normalize_commitment_label(label)
         if canonical in (COMMITMENT, REQUEST):
             accept(number)

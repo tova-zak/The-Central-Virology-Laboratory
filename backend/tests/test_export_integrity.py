@@ -145,8 +145,20 @@ def test_unreviewed_empty_field_still_blocks(name):
     assert not ok and f"c1: {name}_missing" in blockers
 
 
-def test_unreviewed_non_empty_field_still_blocks():
+def _flagged_sender():
+    sender = _field("Clalit", verified=False)
+    sender.extraction_state = ExtractionState.uncertain
+    return sender
+
+
+def test_clean_unreviewed_field_is_auto_accepted():
+    # Exception-only review rule: a clean, valid, unflagged field does not block export.
     ok, blockers = _gate(_record(sender=_field("Clalit", verified=False)))
+    assert ok and blockers == []
+
+
+def test_unreviewed_non_empty_field_still_blocks():
+    ok, blockers = _gate(_record(sender=_flagged_sender()))
     assert not ok and "c1: sender_unreviewed" in blockers
 
 
@@ -185,7 +197,7 @@ def test_export_endpoint_returns_one_row_per_commitment(client, tmp_path):
 
 def test_export_endpoint_still_blocks_unreviewed_field(client):
     http, storage = client
-    batch_id = _save(storage, _record(sender=_field("Clalit", verified=False)))
+    batch_id = _save(storage, _record(sender=_flagged_sender()))
     response = http.post(f"/api/batches/{batch_id}/export")
     assert response.status_code == 400
     assert "c1: sender_unreviewed" in response.json()["detail"]["blockers"]

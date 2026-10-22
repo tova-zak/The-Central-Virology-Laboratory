@@ -19,6 +19,7 @@ from app.services.documents.renderer import DocumentRenderer
 from app.services.extraction.gemini_adapter import GeminiExtractor
 from app.services.extraction.extractor import ExtractionError
 from app.services.extraction.page_evidence import attach_page_evidence
+from app.services.review_rules import mark_auto_accepted
 from app.services.validation import validator
 from app.services.storage import get_storage_backend
 from app.services.storage.local_spool import fetch_original, OriginalUnavailable
@@ -701,15 +702,13 @@ class BackgroundProcessor:
                 review_state=ReviewState.pending
             )
         else:
-            # Multiple commitment numbers on one page → FLAG FOR REVIEW, use first one
+            # Several cleanly accepted (labelled) commitment numbers are NOT ambiguity: the first is the
+            # field value and every other accepted number is kept as a 'multiple_commitments_on_page'
+            # candidate (one export row each). Unlabelled / overlapping numbers stay pending candidates.
             commitment_number_field = FieldValue[str](
                 raw_value=commitment_numbers[0],
-                extraction_state=ExtractionState.conflicting,
-                review_state=ReviewState.needs_review
-            )
-            logger.warning(
-                f"Page {page_index} has multiple commitment candidates. "
-                f"Using first one and flagging for review."
+                extraction_state=ExtractionState.found,
+                review_state=ReviewState.pending
             )
         
         # Extract central numbers (multiple allowed on one page, in ONE commitment)
@@ -745,8 +744,11 @@ class BackgroundProcessor:
             sample_ids=[],  # Simplified: no separate Sample entities in one-page-one-commitment model
             central_number_refs=central_numbers,  # Store central numbers directly
             relationship_status="none" if not central_numbers else "inferred",
-            review_status=commitment_number_field.review_state
+            review_status=commitment_number_field.review_state,
+            source_page=page_index + 1,  # 1-based page of the source document
         )
+        # Exception-only review: clean fields are auto-accepted (never marked human verified).
+        mark_auto_accepted(commitment)
         
         # Store page metadata (add custom fields if needed)
         # Note: CommitmentRecord doesn't have page_index field, but we can use form_id encoding
@@ -789,7 +791,8 @@ class BackgroundProcessor:
             sample_ids=[],
             central_number_refs=[],
             relationship_status="none",
-            review_status=ReviewState.needs_review
+            review_status=ReviewState.needs_review,
+            source_page=page_index + 1
         )
         
         logger.info(f"Created pending commitment record for failed page: {commitment_record_id}")

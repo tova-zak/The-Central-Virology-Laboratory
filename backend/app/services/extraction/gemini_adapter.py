@@ -43,6 +43,43 @@ class CommitmentFormExtraction(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="List of extraction warnings or uncertainties")
 
 
+def _coerce_raw_fields(raw) -> dict:
+    """Lenient shape repair BEFORE strict validation, so a harmless type slip does not discard a whole page.
+
+    Only repairs the container/type, never the content: null lists become [], a single string becomes a one-item
+    list, numbers become strings (digits/leading zeros are kept as sent), malformed commitment_types are dropped.
+    Values are never invented, completed or reformatted.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    fixed = dict(raw)
+
+    def as_text(value):
+        if isinstance(value, bool) or value is None:
+            return None
+        return str(value) if isinstance(value, (int, float)) else value
+
+    for name in ("patient_first_name", "patient_last_name", "patient_id_number", "sender", "received_date"):
+        if name in fixed:
+            fixed[name] = as_text(fixed[name])
+    for name in ("central_numbers", "commitment_numbers", "warnings"):
+        value = fixed.get(name)
+        if value is None:
+            fixed[name] = []
+        elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            fixed[name] = [as_text(value)]
+        elif isinstance(value, list):
+            fixed[name] = [as_text(item) for item in value if item is not None and not isinstance(item, (dict, list, bool))]
+    types = fixed.get("commitment_types")
+    if types is None:
+        fixed["commitment_types"] = []
+    elif isinstance(types, list):
+        fixed["commitment_types"] = [
+            {"number": as_text(item.get("number")), "label": as_text(item.get("label"))}
+            for item in types if isinstance(item, dict) and item.get("number") not in (None, "")]
+    return fixed
+
+
 def _exception_chain(error: Exception) -> list[BaseException]:
     chain = []
     current = error
@@ -417,6 +454,19 @@ FIELD-SPECIFIC EXTRACTION RULES:
    
    CRITICAL: Do NOT extract numbers labeled "בדיקה" (test) into commitment_numbers — they are test identifiers, not commitments.
 
+RECALL GUIDANCE (find every value that IS visibly present; this never relaxes the evidence-only rules above):
+- Scan the ENTIRE page for each of the seven fields before answering. Do not stop at the first label you see.
+- Use visual and layout relationships, not only text beside a label: a value may be ABOVE, BELOW, BESIDE or far from its label, inside a table cell, a box, a sticker, a stamp or in the margin.
+- Rotated, skewed, faint or low-quality scans: mentally rotate the page and read every orientation; stamps and stickers are often rotated.
+- Hebrew handwriting: read letter by letter in context; if every character is clearly readable, return it. If a character is genuinely unreadable, return null for that field and warn - never guess the character.
+- Layouts differ between health funds and hospitals: labels may be abbreviated (ת.ז, ת"ז, מס', מ.ז) or printed in a different order.
+- Patient vs. others: the patient is the person the test is for. Physician, requesting doctor, sender institution, clinic, hospital, department, nurse and signer names are NEVER the patient's name or ID.
+- received_date often sits directly under or beside the central-number sticker, or next to the "התקבל" stamp. Return it exactly as written when it is clearly the receipt date.
+- Contextual labels: "מרכזי" marks central numbers; "התחייבות" and "דרישה" mark commitments; "דגימה" marks a commitment only where the label is visibly attached to the number and the context supports it (for example Leumit forms).
+- A form can hold SEVERAL central numbers and SEVERAL commitment numbers: list ALL of them, one item per number, in reading order.
+- Keep leading zeros exactly. If one digit of a number is unreadable, omit THAT number only (add a warning) and still return the other numbers.
+- If a value cannot be reliably read or attributed to its field, return null (or []) and add a warning that starts with the snake_case field name.
+
 HANDLING ILLEGIBLE OR AMBIGUOUS TEXT:
 - Illegible handwriting → null (not a guess)
 - Partial digits → null (do not complete)
@@ -673,18 +723,21 @@ class GeminiExtractor(Extractor):
             logger.info(f"[{document_id}] JSON parsed in {parse_elapsed:.1f}ms")
             
             try:
-                fields = CommitmentFormExtraction.model_validate(fields, strict=True).model_dump()
+                fields = CommitmentFormExtraction.model_validate(_coerce_raw_fields(fields), strict=True).model_dump()
             except ValidationError:
                 raise ExtractionError("Gemini returned an invalid extraction structure", code="invalid_response") from None
 
             # Context-aware commitment filtering (uses standalone commitment_rules module)
             from app.services.extraction.commitment_rules import classify_commitments
             
+            # The Leumit "דגימה" rule must see the canonical sender even when the raw text only matches an alias.
+            from app.data.sender_normalizer import SenderNormalizer
+            canonical_for_rules = SenderNormalizer().normalize(fields.get('sender'))[0] if fields.get('sender') else None
             classification = classify_commitments(
                 commitment_numbers=fields.get('commitment_numbers', []),
                 commitment_types=fields.get('commitment_types', []),
                 central_numbers=fields.get('central_numbers', []),
-                sender=fields.get('sender')
+                sender=canonical_for_rules or fields.get('sender')
             )
             filter_warnings = classification.warnings
             fields['commitment_numbers'] = classification.accepted

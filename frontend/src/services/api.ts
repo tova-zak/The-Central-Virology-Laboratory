@@ -35,12 +35,14 @@ export interface FieldValue<T = any> {
   normalized_value: T | null;
   reviewed_value: T | null;
   extraction_state: 'found' | 'missing' | 'uncertain' | 'conflicting' | 'invalid';
-  review_state: 'pending' | 'needs_review' | 'human_verified' | 'rejected';
+  review_state: 'pending' | 'auto_accepted' | 'needs_review' | 'human_verified' | 'rejected';
   validation_issues: ValidationIssue[];
   extractor_id?: string;
   extraction_attempt_id?: string;
   candidates?: { value: string; source_label?: string | null; reason: string; status?: string }[];
   extraction_notes?: string[];
+  review_required?: boolean;  // derived by the backend (exception-only review)
+  review_reasons_he?: string[];  // precise Hebrew reasons when review_required
 }
 
 export interface ValidationIssue {
@@ -113,6 +115,8 @@ export interface CommitmentRecord {
   relation_status: 'clear' | 'ambiguous' | 'manual';  // LEGACY: read-only mapping
   relationship_status?: 'explicit' | 'inferred' | 'unresolved_relationship' | 'none';  // NEW: per Decision D2
   page_warnings?: string[];  // short, de-duplicated extraction warnings for the page
+  source_page?: number | null;  // 1-based page of the source document
+  review_required?: boolean;
 }
 
 export interface ProcessingError {

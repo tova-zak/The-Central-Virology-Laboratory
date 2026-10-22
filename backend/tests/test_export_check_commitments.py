@@ -72,11 +72,30 @@ def test_export_check_blocked_needs_review():
     assert blockers == ["cmt_review: patient_first_name_unreviewed"]
 
 
+def test_export_check_clean_pending_field_is_auto_accepted():
+    # Exception-only review rule: a valid, unflagged field does not need a manual approval click.
+    record = _record("cmt_clean", patient_id_number=_field("000000018", "pending"))
+    can_export, blockers = _check_export_eligibility_commitments([record])
+    assert can_export is True and blockers == []
+
+
 def test_export_check_blocked_pending_review_state():
-    record = _record("cmt_pending_field", patient_id_number=_field("000000018", "pending"))
+    flagged = _field("000000018", "pending")
+    flagged["extraction_state"] = "uncertain"
+    record = _record("cmt_pending_field", patient_id_number=flagged)
     can_export, blockers = _check_export_eligibility_commitments([record])
     assert can_export is False
     assert "cmt_pending_field: patient_id_number_unreviewed" in blockers
+
+
+def test_export_check_blocks_pending_candidate_and_century_inferred_date():
+    candidate = _field("200001", "pending")
+    candidate["candidates"] = [{"value": "555", "reason": "no_recognized_label", "status": "pending"}]
+    date = _field("15/03/2026", "pending")
+    date["validation_issues"] = [{"field_name": "received_date", "severity": "warning", "code": "century_inferred", "message": "x"}]
+    ok, blockers = _check_export_eligibility_commitments([_record("cmt_x", commitment_number=candidate, received_date=date)])
+    assert not ok
+    assert "cmt_x: commitment_number_unreviewed" in blockers and "cmt_x: received_date_unreviewed" in blockers
 
 
 def test_export_check_blocked_missing_value():

@@ -250,7 +250,9 @@ def _multi_page():
 def test_multiple_numbers_are_preserved_flagged_and_exported_only_after_human_verification(client, tmp_path):
     record = _multi_page()
     field = record.commitment_number
-    assert field.extraction_state == ExtractionState.conflicting and field.review_state == ReviewState.needs_review
+    # Exception-only review rule: several cleanly accepted numbers are not ambiguity, but the unlabeled "555"
+    # stays a pending candidate, so the page is still blocked until a human resolves it.
+    assert field.extraction_state == ExtractionState.found
     assert {c.value for c in field.candidates} == {"730578626", "730578627", "730578628", "555"}
     _store(record)
     assert client.get(f"/api/batches/{BATCH}/export-check").json()["can_export"] is False
