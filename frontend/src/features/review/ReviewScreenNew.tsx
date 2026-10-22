@@ -15,10 +15,7 @@ import {
   rejectFieldCandidate,
   checkExportEligibility,
   BatchStatusResponse,
-  TestRecord,
-  LogicalForm,
-  Sample,
-  CommitmentRecord
+  TestRecord
 } from '../../services/api';
 import { classifyTestRecords, ClassifiedRecords } from './utils/classification';
 import { isFieldEditable, getFieldDisplayValue, getFieldVisualState, getFieldLabel } from './utils/editPermissions';
@@ -27,8 +24,6 @@ import { EditFieldModal } from './EditFieldModal';
 import { AssignCommitmentModal } from './AssignCommitmentModal';
 import { ResolveRelationshipModal } from './ResolveRelationshipModal';
 import { DocumentViewerModal } from './DocumentViewerModal';
-import { FormCard } from './FormCard';
-import { RelationshipEditor } from './RelationshipEditor';
 import { CommitmentReviewTable } from './CommitmentReviewTable';
 import { validateEditedValue } from './utils/evidence';
 import {
@@ -58,16 +53,10 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
     blockers: string[];
   } | null>(null);
   
-  // View mode: 'cards' for form-based view, 'table' for legacy three-table view
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
-  
   // Search/filter state (independent per table)
   const [searchTable1, setSearchTable1] = useState('');
   const [searchTable2, setSearchTable2] = useState('');
   const [searchTable3, setSearchTable3] = useState('');
-  
-  // Search for cards view
-  const [searchCards, setSearchCards] = useState('');
   
   // Pagination state (20 per page, independent per table)
   const [pageTable1, setPageTable1] = useState(1);
@@ -96,12 +85,6 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
     isOpen: boolean;
     commitment: any;
     testRecord: TestRecord;
-  } | null>(null);
-  
-  // Relationship editor modal state (for form-based view)
-  const [relationshipEditorModal, setRelationshipEditorModal] = useState<{
-    isOpen: boolean;
-    commitment: CommitmentRecord;
   } | null>(null);
   
   // Document viewer modal state
@@ -139,10 +122,6 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
         setExportEligibility(eligibility);
       }
       
-      // Auto-switch to cards view if forms are available
-      if (data.forms && data.forms.length > 0) {
-        setViewMode('cards');
-      }
     } catch (err: any) {
       console.error('Failed to load batch data:', err);
       setError(getErrorMessage(err, 'loadBatch'));
@@ -201,35 +180,6 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
     }
   };
 
-  const handleResolveRelationshipFromEditor = async (
-    commitmentId: string,
-    centralNumberRefs: string[],
-    newStatus: 'related' | 'unrelated'
-  ) => {
-    try {
-      // Backend API expects central_number_refs + relation_status ('related' | 'unrelated')
-      const { resolveCommitmentRelationship } = await import('../../services/api');
-      await resolveCommitmentRelationship(batchId, commitmentId, centralNumberRefs, newStatus);
-      setRelationshipEditorModal(null);
-      await loadBatchData();
-    } catch (err: any) {
-      console.error('Failed to assign samples:', err);
-      alert(`שיוך הדגימות לא הצליח: ${getErrorMessage(err, 'resolve')}`);
-    }
-  };
-
-  const handleDisconnectRelationship = async (commitmentId: string) => {
-    try {
-      const { resolveCommitmentRelationship } = await import('../../services/api');
-      await resolveCommitmentRelationship(batchId, commitmentId, [], 'unrelated');
-      setRelationshipEditorModal(null);
-      await loadBatchData();
-    } catch (err: any) {
-      console.error('Failed to disconnect relationship:', err);
-      alert(`ניתוק הקשר לא הצליח: ${getErrorMessage(err, 'resolve')}`);
-    }
-  };
-
   const handleExport = async () => {
     // Check blockers first - include both legacy and new statistics
     const hasUnresolvedRelationships = batchData?.statistics?.unresolved_relationships ?? 0;
@@ -280,105 +230,6 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
   if (loading) return <div className="review-screen loading" role="status">טוען את נתוני קבוצת המסמכים…</div>;
   if (error) return <div className="review-screen error" role="alert">לא ניתן היה לטעון את הנתונים: {error}</div>;
   if (!batchData || !classified) return null;
-
-  // Helper: Filter forms based on search query
-  const filterForms = (forms: LogicalForm[], search: string): LogicalForm[] => {
-    if (!search.trim()) return forms;
-    const searchLower = search.toLowerCase();
-    return forms.filter(form => {
-      const firstName = getFieldDisplayValue(form.patient_first_name) as string;
-      const lastName = getFieldDisplayValue(form.patient_last_name) as string;
-      const idNumber = getFieldDisplayValue(form.patient_id_number) as string;
-      const sender = getFieldDisplayValue(form.sender) as string;
-      return (
-        (firstName && firstName.toLowerCase().includes(searchLower)) ||
-        (lastName && lastName.toLowerCase().includes(searchLower)) ||
-        (idNumber && idNumber.includes(searchLower)) ||
-        (sender && sender !== '-' && sender.toLowerCase().includes(searchLower)) ||
-        (form.form_id && form.form_id.toLowerCase().includes(searchLower))
-      );
-    });
-  };
-
-  // Helper: Get samples for a form
-  const getSamplesForForm = (formId: string): Sample[] => {
-    if (!batchData.samples) return [];
-    return batchData.samples.filter(s => s.form_id === formId);
-  };
-
-  // Helper: Get commitments for a form
-  const getCommitmentsForForm = (formId: string): CommitmentRecord[] => {
-    if (!batchData.commitment_records) return [];
-    return batchData.commitment_records.filter(c => c.form_id === formId);
-  };
-
-  // Cards view rendering
-  const renderCardsView = () => {
-    if (!batchData.forms || batchData.forms.length === 0) {
-      return (
-        <div className="empty-state">
-          <p>אין טפסים להצגה בתצוגה זו. אפשר לעבור לתצוגת טבלאות.</p>
-        </div>
-      );
-    }
-
-    const filtered = filterForms(batchData.forms, searchCards);
-
-    return (
-      <div className="forms-cards-container">
-        <div className="cards-view-header">
-          <div className="cards-search-controls">
-            <input
-              type="search"
-              placeholder="חיפוש לפי שם, מספר זהות, גורם שולח או מזהה טופס…"
-              value={searchCards}
-              onChange={(e) => setSearchCards(e.target.value)}
-              className="search-input"
-              aria-label="חיפוש טפסים"
-            />
-          </div>
-          <div className="cards-summary">
-            {filtered.length === batchData.forms.length ? (
-              <span>מוצגים <bdi dir="ltr">{batchData.forms.length}</bdi> טפסים</span>
-            ) : (
-              <span>מוצגים <bdi dir="ltr">{filtered.length}</bdi> מתוך <bdi dir="ltr">{batchData.forms.length}</bdi> טפסים</span>
-            )}
-            {batchData.statistics && batchData.statistics.unresolved_relationships > 0 && (
-              <span className="unresolved-badge">
-                <span aria-hidden="true">⚠️</span> <bdi dir="ltr">{batchData.statistics.unresolved_relationships}</bdi> קשרים שטרם נפתרו
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="forms-cards-grid">
-          {filtered.map(form => (
-            <FormCard
-              key={form.form_id}
-              form={form}
-              samples={getSamplesForForm(form.form_id)}
-              commitments={getCommitmentsForForm(form.form_id)}
-              onEdit={(formId) => {
-                // For MVP, editing is not implemented at form level
-                alert(`עריכה ישירה של הטופס ${formId} אינה זמינה כרגע. ניתן לתקן שדות בודדים בתצוגת הטבלאות.`);
-              }}
-              onResolveRelationship={(commitmentId) => {
-                const commitment = batchData.commitment_records.find(
-                  c => c.commitment_record_id === commitmentId
-                );
-                if (commitment) {
-                  setRelationshipEditorModal({
-                    isOpen: true,
-                    commitment
-                  });
-                }
-              }}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  };
 
   // Filter function
   const filterRecords = (records: TestRecord[], search: string): TestRecord[] => {
@@ -596,25 +447,6 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       <div className="header">
         <h1>בדיקת נתונים – קבוצת מסמכים <bdi dir="ltr">{batchId}</bdi></h1>
         <div className="header-actions">
-          {/* View Mode Toggle */}
-          <div className="view-mode-toggle">
-            <button
-              className={`toggle-btn ${viewMode === 'cards' ? 'active' : ''}`}
-              onClick={() => setViewMode('cards')}
-              disabled={!batchData.forms || batchData.forms.length === 0}
-              aria-label="תצוגת טפסים"
-            >
-              <span aria-hidden="true">📋</span> תצוגת טפסים
-            </button>
-            <button
-              className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
-              onClick={() => setViewMode('table')}
-              aria-label="תצוגת טבלאות"
-            >
-              <span aria-hidden="true">📊</span> תצוגת טבלאות
-            </button>
-          </div>
-          
           {onBack && <button onClick={onBack} className="back-btn">חזרה להעלאת מסמכים</button>}
           {exportEligibility && (
             <button
@@ -673,7 +505,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
         )
       )}
 
-      {/* Render based on view mode */}
+      {/* Review tables */}
       {batchData.commitment_records?.length > 0 && !batchData.test_records?.length ? (
         <CommitmentReviewTable
           records={batchData.commitment_records}
@@ -685,7 +517,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
             if (source) setDocumentModal({ isOpen: true, documentId: source[1], pageIndex: Number(source[2]) });
           }}
         />
-      ) : viewMode === 'cards' ? renderCardsView() : (
+      ) : (
         <>
           {/* Orphaned Commitments Section */}
           {classified.orphanedCommitments && classified.orphanedCommitments.length > 0 && (
@@ -802,16 +634,6 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
         />
       )}
 
-      {relationshipEditorModal && relationshipEditorModal.isOpen && batchData && (
-        <RelationshipEditor
-          isOpen={relationshipEditorModal.isOpen}
-          commitment={relationshipEditorModal.commitment}
-          samples={batchData.samples || []}
-          onResolve={handleResolveRelationshipFromEditor}
-          onDisconnect={handleDisconnectRelationship}
-          onClose={() => setRelationshipEditorModal(null)}
-        />
-      )}
     </div>
   );
 };

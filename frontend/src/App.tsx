@@ -64,7 +64,6 @@ function App() {
             <img className="tzalul-logo" src="/logo.png" alt="" />
             <div className="tzalul-header-text">
               <h1 className="tzalul-header-title">המעבדה המרכזית לנגיפים</h1>
-              <p className="tzalul-header-subtitle">סביבת בדיקת נתונים · צלול</p>
             </div>
           </div>
         </header>
@@ -100,9 +99,6 @@ function App() {
             </>
           )}
         </main>
-        {health?.environment === 'staging-real' && (
-          <footer className="env-footnote">{AUTH_TEXT.stagingBanner}</footer>
-        )}
       </div>
     </ErrorBoundary>
   )

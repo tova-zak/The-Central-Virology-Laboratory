@@ -63,12 +63,6 @@
   margin: 0;
 }
 
-.tzalul-header-subtitle {
-  font-size: var(--font-sm);
-  color: var(--text-secondary);
-  margin: 0;
-}
-
 /* Main Content Area */
 .app-main {
   flex: 1;
@@ -128,15 +122,6 @@
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-normal);
-  text-align: center;
-  direction: rtl;
-}
-
-/* Small nonblocking staging disclosure, outside the main workflow */
-.env-footnote {
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--font-xs);
-  color: var(--text-secondary);
   text-align: center;
   direction: rtl;
 }
@@ -228,10 +213,6 @@
 
   .tzalul-header-title {
     font-size: var(--font-base);
-  }
-
-  .tzalul-header-subtitle {
-    font-size: var(--font-xs);
   }
 
   .status-box {
