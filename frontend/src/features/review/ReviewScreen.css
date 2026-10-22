@@ -190,9 +190,7 @@
 .review-table thead {
   background-color: #F8FAFB;
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  position: static; /* not sticky: would hide under the sticky app header */
 }
 
 .review-table th {

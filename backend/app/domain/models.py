@@ -38,11 +38,13 @@ class ReviewState(str, Enum):
     """Human review state for a field.
     
     - pending: Not flagged, no review needed (DIFFERENT from human_verified)
+    - auto_accepted: Clean valid value accepted automatically (exception-only review). NEVER means human verified.
     - needs_review: Flagged for human attention (blocks export)
     - human_verified: Reviewed/corrected by human (may be empty string!)
     - rejected: Marked as incorrect by human
     """
     pending = "pending"
+    auto_accepted = "auto_accepted"
     needs_review = "needs_review"
     human_verified = "human_verified"
     rejected = "rejected"
@@ -217,3 +219,6 @@ class CommitmentRecord(BaseModel):
     # Review status for this commitment
     review_status: ReviewState = ReviewState.pending
     page_warnings: list[str] = Field(default_factory=list)
+
+    # 1-based page of the source document this record was extracted from (None when unknown, e.g. legacy records)
+    source_page: Optional[int] = None

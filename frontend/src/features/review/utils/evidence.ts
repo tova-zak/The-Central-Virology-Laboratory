@@ -25,6 +25,8 @@ export interface EvidenceField {
   validation_issues?: { severity?: string; message?: string; code?: string | null }[];
   candidates?: EvidenceCandidate[];
   extraction_notes?: string[];
+  review_required?: boolean;
+  review_reasons_he?: string[];
 }
 
 const REASON_LABELS: Record<string, string> = {
@@ -142,6 +144,70 @@ export function canApproveAsIs(fieldName: string, field?: EvidenceField | null):
     if (typeof value === 'string' && value.trim() && !isCompleteDate(value)) return false;
   }
   return true;
+}
+
+const MISSING_HE: Record<string, string> = {
+  patient_first_name: 'השם הפרטי לא זוהה במסמך.',
+  patient_last_name: 'שם המשפחה לא זוהה במסמך.',
+  patient_id_number: 'מספר תעודת הזהות לא זוהה במסמך.',
+  sender: 'הגורם השולח לא זוהה או אינו ברשימה המאושרת.',
+  received_date: 'תאריך קבלת הדגימה לא זוהה במסמך.',
+  central_numbers: 'לא זוהה מספר מרכזי במסמך.',
+  commitment_number: 'לא זוהה מספר התחייבות במסמך.',
+};
+const WARNING_HE: Record<string, string> = {
+  patient_first_name: 'השם בכתב היד אינו קריא באופן ברור.',
+  patient_last_name: 'שם המשפחה בכתב היד אינו קריא באופן ברור.',
+  patient_id_number: 'מספר תעודת הזהות אינו קריא או אינו חד-משמעי במסמך.',
+  sender: 'הגורם השולח אינו חד-משמעי במסמך.',
+  received_date: 'התאריך אינו ברור או אינו חד-משמעי במסמך.',
+  central_numbers: 'המספר המרכזי אינו ברור או אינו חד-משמעי במסמך.',
+  commitment_number: 'מספר ההתחייבות אינו ברור או אינו חד-משמעי במסמך.',
+};
+
+function isEmptyValue(value: unknown): boolean {
+  return value === null || value === undefined || (typeof value === 'string' && !value.trim())
+    || (Array.isArray(value) && value.length === 0);
+}
+
+/**
+ * Hebrew reasons why a field still needs a human. The backend (review_reasons_he) is authoritative; this
+ * fallback mirrors its rules for older responses. Empty list == clean/auto-accepted or already resolved.
+ */
+export function reviewReasons(fieldName: string, field?: EvidenceField | null): string[] {
+  if (!field) return [MISSING_HE[fieldName] ?? 'הערך חסר.'];
+  if (isHumanVerified(field)) return [];
+  if (Array.isArray(field.review_reasons_he)) return field.review_reasons_he;
+  const reasons: string[] = [];
+  const add = (text: string) => { if (!reasons.includes(text)) reasons.push(text); };
+  if (isEmptyValue(effectiveValue(field))) add(MISSING_HE[fieldName] ?? 'הערך חסר.');
+  if (isCenturyInferredDate(field)) add('התאריך כולל שנה דו־ספרתית שהורחבה ל־20YY — נדרש אישור.');
+  for (const issue of field.validation_issues ?? []) {
+    if (issue.code !== 'century_inferred') add(issue.message ? 'נמצאה בעיית תקינות בערך — יש לתקן או לאשר.' : 'הערך אינו תקין.');
+  }
+  if (pendingCandidates(field).some(c => c.reason !== 'multiple_commitments_on_page')) {
+    add('זוהו אפשרויות נוספות — נדרשת בחירה ידנית.');
+  }
+  if ((field.extraction_notes ?? []).length > 0 || ['uncertain', 'conflicting', 'invalid'].includes(field.extraction_state ?? '')) {
+    add(WARNING_HE[fieldName] ?? 'זוהתה אזהרת חילוץ בשדה.');
+  }
+  if (reasons.length === 0 && (field.review_state === 'needs_review' || field.review_state === 'rejected')) {
+    add('השדה סומן לבדיקה ידנית.');
+  }
+  return reasons;
+}
+
+/** Exception-only review: true only for an unresolved field that needs a human. */
+export function needsReview(fieldName: string, field?: EvidenceField | null): boolean {
+  if (field && typeof field.review_required === 'boolean' && !isHumanVerified(field)) return field.review_required;
+  return reviewReasons(fieldName, field).length > 0;
+}
+
+/** Source page (1-based) as stored by the backend; never a row index. */
+export function sourcePageLabel(record: { source_page?: number | null; form_id?: string | null }): string {
+  if (typeof record.source_page === 'number' && record.source_page >= 1) return String(record.source_page);
+  const match = (record.form_id ?? '').match(/_page_(\d+)$/);
+  return match ? String(Number(match[1]) + 1) : '—';
 }
 
 /** Validator for the edit dialog: returns an error message or null. */

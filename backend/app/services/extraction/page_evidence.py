@@ -56,6 +56,13 @@ def attach_page_evidence(commitment_field, page_fields: dict, fields: dict, warn
     if not accepted and rejected and commitment_field.extraction_state == ExtractionState.missing:
         commitment_field.extraction_state = ExtractionState.uncertain
         commitment_field.review_state = ReviewState.needs_review
+        only = rejected[0] if len(rejected) == 1 else None
+        if only and commitment_field.raw_value is None and (
+                only.get("reason") == "ambiguous_label"
+                or (only.get("reason") == "no_recognized_label" and not only.get("source_label"))):
+            # A single read number with no contradicting label (a "test" label is never kept) stays visible as
+            # the uncertain value for the reviewer instead of leaving the field empty. Not accepted, not confident.
+            commitment_field.raw_value = str(only["value"])
         _add_note(commitment_field, "%d number(s) were not accepted automatically; see candidates" % len(rejected))
 
     received = page_fields.get("received_date")

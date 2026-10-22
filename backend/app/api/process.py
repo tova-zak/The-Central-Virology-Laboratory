@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.services.processing.background import get_processor, ProcessingStatus, find_retry_targets
 from app.services.validation import validator
+from app.services.review_rules import field_review_reasons, annotate_record
 from app.services.export import ExcelExporter
 from app.services.storage import get_storage_backend
 from app.domain.models import (
@@ -891,6 +892,10 @@ def _add_record_statuses(batch_data: dict) -> dict:
             # Skip invalid commitment records
             pass
     
+    # Derived exception-only review flags and Hebrew reasons (same helper as the export gate)
+    for commitment_dict in batch_data.get("commitment_records", []):
+        annotate_record(commitment_dict)
+
     # Add record_status to each test_record
     for record_dict in batch_data.get("test_records", []):
         try:
@@ -994,7 +999,9 @@ def _check_export_eligibility_commitments(commitment_records: list) -> tuple[boo
                 continue
             if empty or (isinstance(value, list) and any(not str(v or "").strip() for v in value)):
                 blockers.append(f"{commitment_id}: {field_name}_missing")
-            elif field.get("review_state") != "human_verified":
+            elif field_review_reasons(field_name, field):
+                # Exception-only review: a clean, valid, unflagged field (auto-accepted) needs no click;
+                # anything flagged (error, warning, pending candidate, century-inferred date...) still blocks.
                 blockers.append(f"{commitment_id}: {field_name}_unreviewed")
 
     return not blockers, blockers

@@ -1,4 +1,4 @@
-﻿"""Saved-records history/search: synthetic data, fake local storage only (no Supabase/Gemini)."""
+"""Saved-records history/search: synthetic data, fake local storage only (no Supabase/Gemini)."""
 import copy
 
 import pytest
@@ -56,7 +56,10 @@ def env(tmp_path, monkeypatch):
 def seed(storage):
     save(storage, "b_old", "2025-01-01T10:00:00", [page(0, first="אורי", last="לוי", pid="111111118",
          centrals=("C1", "C2"), commitment="7001", verified=True)])
-    save(storage, "b_mixed", "2025-02-01T10:00:00", [page(0, verified=True), page(1)])
+    # Exception-only review: a clean unverified page is auto-accepted, so the "pending" page carries a flagged field.
+    flagged = page(1)
+    flagged["sender"]["extraction_state"] = "uncertain"
+    save(storage, "b_mixed", "2025-02-01T10:00:00", [page(0, verified=True), flagged])
     save(storage, "b_bad", "2025-03-01T10:00:00", [broken_page(0)])
     save(storage, "b_new", "2025-04-01T10:00:00", [page(0, first="שרה", last="מזרחי", pid="222222226",
          sender="מרפאה אחרת", centrals=("C300", "C301"), commitment="8123", verified=True)])
