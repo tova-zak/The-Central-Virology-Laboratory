@@ -15,7 +15,8 @@ import {
   rejectFieldCandidate,
   checkExportEligibility,
   BatchStatusResponse,
-  TestRecord
+  TestRecord,
+  CommitmentRecord
 } from '../../services/api';
 import { classifyTestRecords, ClassifiedRecords } from './utils/classification';
 import { isFieldEditable, getFieldDisplayValue, getFieldVisualState, getFieldLabel } from './utils/editPermissions';
@@ -187,7 +188,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       await loadBatchData();
     } catch (err: any) {
       console.error('Failed to confirm record review:', err);
-      alert(`אישור הרשומה נכשל: ${getErrorMessage(err, 'confirmReview')}`);
+      alert(`אישור הרשומה נכשל: ${getErrorMessage(err, 'updateField')}`);
     }
   };
 

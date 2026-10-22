@@ -193,3 +193,58 @@ def mark_auto_accepted(commitment) -> None:
             continue
         if not field_review_reasons(name, field.model_dump(mode="json")):
             field.review_state = ReviewState.auto_accepted
+
+
+def record_review_token(record: dict) -> str:
+    """Generate a review token for the entire record based on all field values.
+    
+    Used to detect if any field changed after a whole-record review was confirmed.
+    """
+    import hashlib
+    import json
+    
+    # Collect all reviewable field values in a stable order
+    field_values = {}
+    for name in REVIEW_FIELDS:
+        field = record.get(name)
+        if isinstance(field, dict):
+            field_values[name] = effective_value(field)
+    
+    # Include relationship status
+    field_values["relationship_status"] = record.get("relationship_status")
+    
+    # Generate hash
+    token_data = json.dumps(field_values, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(token_data.encode()).hexdigest()[:16]
+
+
+def final_review_confirmed(record: dict) -> bool:
+    """Check if whole-record review has been confirmed and token matches current state."""
+    if not record.get("final_review_confirmed"):
+        return False
+    
+    stored_token = record.get("final_review_token")
+    if not stored_token:
+        return False
+    
+    current_token = record_review_token(record)
+    return stored_token == current_token
+
+
+def invalidate_changed_final_review(record: dict) -> dict:
+    """Reset final_review_confirmed if the review token changed (field was edited).
+    
+    Call this after any field update to ensure export blocking is enforced.
+    Returns the updated record dict (modifies in place).
+    """
+    if not record.get("final_review_confirmed"):
+        return record
+    
+    stored_token = record.get("final_review_token")
+    current_token = record_review_token(record)
+    
+    if stored_token != current_token:
+        record["final_review_confirmed"] = False
+        record["final_review_token"] = None
+    
+    return record
