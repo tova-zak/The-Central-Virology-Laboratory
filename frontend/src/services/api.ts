@@ -117,6 +117,9 @@ export interface CommitmentRecord {
   page_warnings?: string[];  // short, de-duplicated extraction warnings for the page
   source_page?: number | null;  // 1-based page of the source document
   review_required?: boolean;
+  final_review_token?: string;
+  final_review_confirmed?: boolean;
+  final_review_confirmed_at?: string | null;
 }
 
 export interface ProcessingError {
@@ -295,6 +298,14 @@ export const verifyField = async (
  * Export batch to Excel
  * Returns blob for download
  */
+export const confirmRecordReview = async (batchId: string, recordId: string, reviewToken: string): Promise<CommitmentRecord> => {
+  const response = await apiClient.post<CommitmentRecord>(
+    `/api/batches/${batchId}/commitments/${recordId}/confirm-review`,
+    { reviewed: true, review_token: reviewToken }
+  );
+  return response.data;
+};
+
 export const exportBatch = async (batchId: string): Promise<Blob> => {
   const response = await apiClient.post(`/api/batches/${batchId}/export`, null, {
     responseType: 'blob',

@@ -1,8 +1,6 @@
 /**
  * CommitmentReviewTable - one row per page/commitment, with field evidence for fields that need review.
- * Exception-only review: clean fields are shown read-only (auto-accepted, never "human verified"); only fields
- * with a real problem show the Hebrew reason and an edit/confirm button. Editing and approval go through the
- * existing edit dialog and backend; this component never verifies anything.
+ * All fields remain editable; explicit whole-record confirmation is separate from field verification.
  */
 import React from 'react';
 import { CommitmentRecord } from '../../services/api';
@@ -26,6 +24,7 @@ interface CommitmentReviewTableProps {
   onEdit: (recordId: string, fieldName: ReviewFieldName, value: any, helperText?: string) => void;
   onRejectCandidate: (recordId: string, fieldName: ReviewFieldName, value: string) => void;
   onViewSource: (record: CommitmentRecord) => void;
+  onConfirmReview: (record: CommitmentRecord) => void;
 }
 
 const USE_CANDIDATE_HINT = 'הערך המוצע טרם אושר. ערוך אותו לפי הצורך ושמור כדי לאשר.';
@@ -43,9 +42,10 @@ function displayText(name: ReviewFieldName, field: any, value: any): string {
   return String(value);
 }
 
-export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ records, onEdit, onRejectCandidate, onViewSource }) => (
+export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ records, onEdit, onRejectCandidate, onViewSource, onConfirmReview }) => (
   <section className="table-section commitment-review-table-section">
-    <h2>בדיקת התחייבויות לפי עמוד</h2>
+    <h2>בדיקה סופית של הרשומות לפני ייצוא</h2>
+    <p>יש לבדוק מול המקור את כל שבעת השדות, גם ללא התראות, לתקן לפי הצורך ולאשר כל רשומה בסיום.</p>
     <div className="table-wrapper">
     <table className="review-table commitment-review-table" dir="rtl">
       <thead>
@@ -59,7 +59,8 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
           const warnings = visiblePageWarnings(record.page_warnings);
           const page = sourcePageLabel(record);
           return (
-            <tr key={record.commitment_record_id}>
+            <React.Fragment key={record.commitment_record_id}>
+            <tr>
               <td className="col-page" data-label="עמוד">
                 <span className="page-number" title={record.form_id ? `מסמך: ${record.form_id}` : undefined}>{page}</span>
                 <button type="button" onClick={() => onViewSource(record)} aria-label={`צפה במקור, עמוד ${page}`}>מקור</button>
@@ -92,11 +93,16 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
                       <>
                         <span className="cell-state state-review">דורש בדיקה</span>
                         {reasons.map(reason => <span key={reason} className="cell-reason" role="note">{reason}</span>)}
-                        <button type="button" onClick={() => onEdit(record.commitment_record_id, name, value ?? emptyValue)}>
-                          {approvable ? 'ערוך ואשר' : 'תקן ואשר'}
-                        </button>
                       </>
                     )}
+                    <button type="button" aria-label={`עריכת ${label}, עמוד ${page}`} onClick={() => {
+                      const editValue = name === 'commitment_number'
+                        ? [value, ...(field?.candidates ?? []).filter((c: any) => c.reason === 'multiple_commitments_on_page' && c.status !== 'rejected').map((c: any) => c.value)].filter((v, i, all) => v && all.indexOf(v) === i)
+                        : value ?? emptyValue;
+                      onEdit(record.commitment_record_id, name, editValue);
+                    }}>
+                      {review ? (approvable ? 'ערוך ואשר' : 'תקן ואשר') : 'עריכה'}
+                    </button>
                     {name === 'commitment_number' && exportableCommitmentCount(field) > 1 && (
                       <span className="cell-export-note">
                         {`ייוצאו ${exportableCommitmentCount(field)} שורות באקסל`}
@@ -114,6 +120,19 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
                 );
               })}
             </tr>
+            <tr className="final-record-review">
+              <td colSpan={8}>
+                {record.final_review_confirmed ? <span role="status">בדיקת הרשומה אושרה. האישור נשמר עד לשינוי הנתונים.</span> : <>
+                  <span>נדרש אישור בדיקה סופית של כל הרשומה. </span>
+                  <button type="button" onClick={() => onConfirmReview(record)}
+                    disabled={!record.final_review_token || REVIEW_FIELDS.some(name => needsReview(name, record[name])) || record.relationship_status === 'unresolved_relationship'}>
+                    אישור בדיקת הרשומה, עמוד {page}
+                  </button>
+                  {(REVIEW_FIELDS.some(name => needsReview(name, record[name])) || record.relationship_status === 'unresolved_relationship') && <span> יש לפתור את ההערות והקשרים לפני האישור.</span>}
+                </>}
+              </td>
+            </tr>
+            </React.Fragment>
           );
         })}
       </tbody>

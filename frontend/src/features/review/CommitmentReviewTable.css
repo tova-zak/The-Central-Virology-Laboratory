@@ -11,6 +11,12 @@
   margin-bottom: var(--space-8);
 }
 
+.final-record-review td {
+  padding: var(--space-3);
+  background: var(--bg-hover);
+  border-bottom: 2px solid var(--border);
+}
+
 .commitment-review-table-section > h2 {
   padding: var(--space-4) var(--space-6);
   background: var(--bg);
