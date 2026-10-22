@@ -41,8 +41,6 @@ const REASON_LABELS: Record<string, string> = {
 
 const TWO_DIGIT_YEAR = /^\s*\d{1,2}([./-])\d{1,2}\1\d{2}\s*$/;
 const COMPLETE_DATE = /^\s*(\d{1,2}([./-])\d{1,2}\2\d{4}|\d{4}-\d{1,2}-\d{1,2})\s*$/;
-const NOTE_DISPLAY_LIMIT = 200;
-const WARNING_DISPLAY_LIMIT = 5;
 
 export function reasonLabel(reason: string): string {
   return REASON_LABELS[reason] ?? 'מועמד לבדיקה';
@@ -69,7 +67,7 @@ export function visibleNotes(field?: EvidenceField | null): string[] {
   const seen = new Set<string>();
   const notes: string[] = [];
   for (const raw of field.extraction_notes ?? []) {
-    const note = String(raw).replace(/\s+/g, ' ').trim().slice(0, NOTE_DISPLAY_LIMIT);
+    const note = String(raw).replace(/\s+/g, ' ').trim();
     if (note && !seen.has(note)) {
       seen.add(note);
       notes.push(note);
@@ -82,13 +80,13 @@ export function visiblePageWarnings(warnings?: string[] | null): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const raw of warnings ?? []) {
-    const text = String(raw).replace(/\s+/g, ' ').trim().slice(0, NOTE_DISPLAY_LIMIT);
+    const text = String(raw).replace(/\s+/g, ' ').trim();
     if (text && !seen.has(text)) {
       seen.add(text);
       result.push(text);
     }
   }
-  return result.slice(0, WARNING_DISPLAY_LIMIT);
+  return result;
 }
 
 export function hasEvidence(field?: EvidenceField | null): boolean {

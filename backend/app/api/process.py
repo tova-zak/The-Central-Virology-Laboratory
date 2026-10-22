@@ -10,7 +10,8 @@ from app.core.config import settings
 from app.services.processing.background import get_processor, ProcessingStatus, find_retry_targets
 from app.services.validation import validator
 from app.services.review_rules import (field_review_reasons, annotate_record, record_review_token,
-                                       final_review_confirmed, invalidate_changed_final_review, effective_value)
+                                       final_review_confirmed, invalidate_changed_final_review, effective_value,
+                                       relationship_review_required)
 from app.services.export import ExcelExporter
 from app.services.storage import get_storage_backend
 from app.domain.models import (
@@ -286,6 +287,14 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
     
     # Update the field - save to reviewed_value
     new_value = update.get("new_value")
+    # null means no reviewed decision, never an explicitly confirmed empty string.
+    if field_name in ("central_numbers", "commitment_number") and isinstance(new_value, list):
+        if any(not isinstance(v, str) or not v.strip() for v in new_value):
+            raise HTTPException(400, "Numbers must be non-empty strings")
+    elif not isinstance(new_value, str) or field_name == "central_numbers":
+        raise HTTPException(400, "A reviewed scalar must be a string; central numbers must be a list of strings")
+    if isinstance(new_value, str) and not new_value.strip():
+        new_value = ""
     
     # CONFIRMED-EMPTY PROTECTION: prevent setting non-confirmable fields to empty
     if field_name in ['patient_id_number', 'central_numbers']:
@@ -450,7 +459,8 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
     if field_name == "received_date":
         from app.services.validation.date_normalizer import assess_date
         # Assess the reviewed value when present, else the ORIGINAL text so a century inference stays visible.
-        effective = next((field.get(k) for k in ("reviewed_value", "raw_value", "normalized_value") if field.get(k)), None)
+        effective = (field["reviewed_value"] if field.get("reviewed_value") is not None
+                     else next((field.get(k) for k in ("raw_value", "normalized_value") if field.get(k) is not None), None))
         date_assessment = assess_date(effective) if effective else None
         if date_assessment and (date_assessment.status in ("invalid_date", "unrecognized")
                                 or (date_assessment.status == "future" and date_assessment.century_inferred)):
@@ -460,16 +470,9 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
             )
     if field_name in ['patient_id_number', 'central_numbers']:
         # Check if the field is empty
-        reviewed_val = field.get("reviewed_value")
-        normalized_val = field.get("normalized_value")
-        raw_val = field.get("raw_value")
-        
-        # If all values are empty/None/empty list, reject confirmation
-        is_empty = (
-            (not reviewed_val or (isinstance(reviewed_val, list) and len(reviewed_val) == 0)) and
-            (not normalized_val or (isinstance(normalized_val, list) and len(normalized_val) == 0)) and
-            (not raw_val or (isinstance(raw_val, list) and len(raw_val) == 0))
-        )
+        from app.services.review_rules import is_empty_value, has_blank_item
+        current = effective_value(field)
+        is_empty = is_empty_value(current) or has_blank_item(current)
         
         if is_empty:
             raise HTTPException(
@@ -487,6 +490,10 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
 
     # Mark as verified
     field["review_state"] = "human_verified"
+    if field_name in CONFIRMABLE_EMPTY_FIELDS:
+        from app.services.review_rules import is_empty_value
+        if is_empty_value(effective_value(field)):
+            field["reviewed_value"] = ""  # Persist the explicit human confirmation, distinct from null.
     
     # If it was missing, keep it as missing but verified
     # This allows verified empty fields
@@ -1033,7 +1040,7 @@ def _check_export_eligibility_commitments(commitment_records: list, *, require_f
             blockers.append(f"{commitment_id}: final_record_review_required")
         if commitment.get("status") in ("pending", "incomplete"):
             blockers.append(f"{commitment_id}: incomplete_extraction")
-        if commitment.get("relationship_status") == "unresolved_relationship":
+        if relationship_review_required(commitment):
             blockers.append(f"{commitment_id}: unresolved_relationship")
         for field_name in ("patient_first_name", "patient_last_name", "patient_id_number",
                            "sender", "received_date", "central_numbers", "commitment_number"):
@@ -1173,9 +1180,22 @@ async def resolve_commitment_relationship(
     commitment_found = False
     for commitment in batch_data.get("commitment_records", []):
         if commitment.get("commitment_record_id") == commitment_id:
+            # A relationship may only point to numbers on this record (or its legacy test).
+            source = commitment
+            if not source.get("central_numbers"):
+                source = next((r for r in batch_data.get("test_records", [])
+                               if r.get("test_id") == commitment.get("test_id")), {})
+            available = effective_value(source.get("central_numbers") or {}) or []
+            if (not isinstance(central_number_refs, list)
+                    or any(not isinstance(v, str) or not v.strip() or v not in available for v in central_number_refs)
+                    or (new_status == "related" and not central_number_refs)
+                    or (new_status == "unrelated" and central_number_refs)):
+                raise HTTPException(400, "Select non-empty central numbers from this record, or explicitly disconnect")
+            central_number_refs = list(dict.fromkeys(central_number_refs))
             commitment_found = True
             commitment["central_number_refs"] = central_number_refs
             commitment["relation_status"] = new_status
+            commitment["relationship_status"] = "explicit" if new_status == "related" else "none"
             break
     
     if not commitment_found:

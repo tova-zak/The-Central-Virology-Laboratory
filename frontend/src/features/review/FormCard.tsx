@@ -68,10 +68,12 @@ const getRelationshipStatusColor = (commitment: CommitmentRecord): 'green' | 'or
 /**
  * Map legacy relation_status to new relationship_status
  */
-const mapLegacyStatus = (legacy: 'clear' | 'ambiguous' | 'manual'): string => {
+const mapLegacyStatus = (legacy: CommitmentRecord['relation_status']): string => {
   if (legacy === 'clear') return 'explicit';
   if (legacy === 'ambiguous') return 'unresolved_relationship';
   if (legacy === 'manual') return 'explicit';
+  if (legacy === 'related') return 'explicit';
+  if (legacy === 'unrelated') return 'none';
   return 'unresolved_relationship';
 };
 

@@ -68,6 +68,7 @@ class PreprocessingConfig:
     # General settings
     preserve_original: bool = True  # Always preserve original image
     max_dimension: int = 3000  # Prevent memory issues
+    selection_policy: str = "quality"  # "original" explicitly disables variant selection
 
 
 class ImagePreprocessor:
@@ -189,6 +190,53 @@ class ImagePreprocessor:
         
         logger.info(f"Preprocessing generated {len(results)} image variants")
         return results
+
+    def select_variant(self, original: bytes, variants) -> Tuple[bytes, PreprocessingMethod]:
+        """Conservative image-only gate; never claims OCR/semantic accuracy.
+
+        Geometry candidates must retain size, ink and edge detail, and improve horizontal
+        line concentration by at least 15%. Contrast/threshold/denoise alone cannot prove
+        orientation improvement and remain opt-in generation only. Ties keep the original.
+        No image content or metrics containing text are logged or persisted.
+        """
+        fallback = (original, PreprocessingMethod.ORIGINAL)
+        if self.config.selection_policy == "original":
+            return fallback
+        try:
+            base = self._selection_metrics(original)
+        except Exception:
+            return fallback
+        if base["ink"] < 64 or base["sharpness"] <= 0:
+            return fallback
+        best, best_score = fallback, base["alignment"] * 1.15
+        for content, method in variants or []:
+            if method not in (PreprocessingMethod.DESKEWED, PreprocessingMethod.ROTATION_CORRECTED):
+                continue
+            try:
+                candidate = self._selection_metrics(content)
+                # Expanded rotation canvases are allowed, crops and downscales are not.
+                before, after = sorted(base["size"]), sorted(candidate["size"])
+                if any(b < a * .98 or b > a * 1.25 for a, b in zip(before, after)):
+                    continue
+                if not .85 <= candidate["ink"] / base["ink"] <= 1.15:
+                    continue
+                if candidate["sharpness"] < base["sharpness"] * .65:
+                    continue
+                if candidate["alignment"] > best_score:
+                    best, best_score = (content, method), candidate["alignment"]
+            except Exception:
+                continue  # A bad candidate must never discard a readable original.
+        return best
+
+    def _selection_metrics(self, content: bytes) -> dict:
+        image = self._bytes_to_cv2(content)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        mask = gray < 180
+        ink = int(mask.sum())
+        rows = mask.sum(axis=1).astype(float)
+        return {"size": gray.shape, "ink": ink,
+                "sharpness": float(cv2.Laplacian(gray, cv2.CV_64F).var()),
+                "alignment": float(np.sum(rows * rows) * len(rows) / max(1, ink * ink))}
     
     def _correct_rotation(self, image: np.ndarray) -> Optional[np.ndarray]:
         """Correct image rotation using basic heuristics.

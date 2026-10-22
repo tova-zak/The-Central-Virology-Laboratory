@@ -64,6 +64,12 @@ def is_empty_value(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip()) or value == []
 
 
+def relationship_review_required(record: dict) -> bool:
+    """Both persisted relationship representations must be free of unresolved ambiguity."""
+    return (record.get("relation_status") == "ambiguous" or
+            record.get("relationship_status") in ("unresolved_relationship", "unknown", "ambiguous"))
+
+
 def has_blank_item(value: Any) -> bool:
     return isinstance(value, list) and any(not str(v or "").strip() for v in value)
 
@@ -198,7 +204,8 @@ def annotate_record(record: dict) -> dict:
         field["review_required"] = bool(reasons)
         field["review_reasons_he"] = reasons
         any_required = any_required or bool(reasons)
-    if record.get("relationship_status") == "unresolved_relationship":
+    record["relationship_review_required"] = relationship_review_required(record)
+    if record["relationship_review_required"]:
         any_required = True
         record_reasons.append("הקשר בין המספרים המרכזיים להתחייבות לא נפתר.")
     record["source_page"] = source_page_of(record)

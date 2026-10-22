@@ -85,7 +85,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
   const [resolveModal, setResolveModal] = useState<{
     isOpen: boolean;
     commitment: any;
-    testRecord: TestRecord;
+    testRecord: Pick<TestRecord, 'test_id' | 'central_numbers'>;
   } | null>(null);
   
   // Document viewer modal state
@@ -527,6 +527,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
             openEditModal(recordId, fieldName, value, helperText)}
           onRejectCandidate={handleRejectCandidate}
           onConfirmReview={handleConfirmRecord}
+          onResolveRelationship={record => setResolveModal({isOpen:true, commitment:record,
+            testRecord:{test_id:record.commitment_record_id, central_numbers:record.central_numbers!}})}
           onViewSource={record => {
             const source = record.form_id?.match(/^(.+)_page_(\d+)$/);
             if (source) setDocumentModal({ isOpen: true, documentId: source[1], pageIndex: Number(source[2]) });

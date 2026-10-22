@@ -10,7 +10,7 @@ USER REQUIREMENTS ENFORCED:
 - All features individually togglable
 """
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Literal
 
 
 class HybridExtractionConfig(BaseSettings):
@@ -52,6 +52,7 @@ class HybridExtractionConfig(BaseSettings):
     # Always preserve original
     preserve_original_image: bool = True  # USER REQUIREMENT: Always
     max_image_dimension: int = 3000
+    image_selection_policy: Literal["quality", "original"] = "quality"
     
     # ==================== PHASE 2: OCR LAYER ====================
     
@@ -247,7 +248,16 @@ def get_hybrid_config() -> HybridExtractionConfig:
     """
     global _hybrid_config
     if _hybrid_config is None:
+        import os
+        from dotenv import load_dotenv
+        from app.core.config import ENV_FILE_PATH
+
+        if ENV_FILE_PATH.is_file():
+            load_dotenv(ENV_FILE_PATH)
+
         _hybrid_config = HybridExtractionConfig()
+        if not _hybrid_config.tesseract_cmd:
+            _hybrid_config.tesseract_cmd = os.getenv("TESSERACT_CMD")
         _hybrid_config.apply_preprocessing_profile()
         
         # Log warnings

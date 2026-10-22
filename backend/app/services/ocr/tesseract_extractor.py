@@ -207,8 +207,9 @@ class TesseractExtractor(Extractor):
             warnings.append("OCR_USE: Use for printed text verification, not as primary source")
             
             # Add low-confidence warnings
+            avg_confidence = None
             if ocr_data and 'conf' in ocr_data:
-                confidences = [float(c) for c in ocr_data['conf'] if c != '-1']
+                confidences = [float(c) for c in ocr_data['conf'] if float(c) >= 0]
                 if confidences:
                     avg_confidence = sum(confidences) / len(confidences)
                     if avg_confidence < self.config.min_confidence:
@@ -224,7 +225,8 @@ class TesseractExtractor(Extractor):
                 model_id="tesseract-ocr",
                 prompt_version="ocr-verification-v1",
                 processing_time_ms=processing_time,
-                raw_response=full_text
+                raw_response=full_text,
+                ocr_confidence=avg_confidence
             )
             
         except Exception as e:
@@ -268,40 +270,41 @@ class TesseractExtractor(Extractor):
         # Parse line by line
         lines = full_text.split('\n')
         
-        # Attempt to find ID number (9 digits)
-        # Look for patterns like "ת.ז: 123456789" or "ת.ז. 123456789"
-        id_pattern = r'(?:ת\.ז\.?|מס\'?\s*זהות)[:\s]+(\d{9})'
+        id_labels = r"(?:ת\.ז\.?|מס(?:'|\s*)?זהות|\bID\b|\bI\.D\.?\b)"
+        id_pattern = id_labels + r"[:\s]+(?<!\d)(\d{9})(?!\d)"
         for line in lines:
             match = re.search(id_pattern, line, re.IGNORECASE)
             if match:
                 fields["patient_id_number"] = match.group(1)
                 break
-        
-        # Attempt to find date (DD/MM/YYYY or YYYY-MM-DD)
-        date_pattern = r'(?:התקבל|תאריך)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})'
+
+        date_labels = r"(?:התקבל|תאריך\s*קבלה|תאריך|\bDate\b|\bReceived\b)"
+        date_pattern = (
+            date_labels + r"[:\s]+(\d{1,2}\s*[./\-]\s*\d{1,2}\s*[./\-]\s*\d{2,4}|\d{4}-\d{1,2}-\d{1,2})"
+        )
         for line in lines:
             match = re.search(date_pattern, line, re.IGNORECASE)
             if match:
-                fields["received_date"] = match.group(1)
+                fields["received_date"] = re.sub(r"\s+", "", match.group(1))
                 break
-        
-        # Attempt to find central numbers
-        # Look for "מרכזי" followed by number, or standalone 5-6 digit numbers
-        central_pattern = r'(?:מרכזי|מספר\s+מרכזי)[:\s]+(\d{5,7})'
+
+        central_labels = r"(?:מרכזי|מס(?:'|\s*)?מרכזי|\bCentral\b|\bCentral\s+No\.?\b)"
+        central_pattern = central_labels + r"[:\s]+(\d{5,7})"
         for line in lines:
-            match = re.search(central_pattern, line, re.IGNORECASE)
-            if match:
+            for match in re.finditer(central_pattern, line, re.IGNORECASE):
                 central_num = match.group(1)
                 if central_num not in fields["central_numbers"]:
                     fields["central_numbers"].append(central_num)
-        
-        # Attempt to find commitment numbers
-        # Look for "התחייבות" or "דרישה" followed by alphanumeric
-        commitment_pattern = r'(?:התחייבות|דרישה|מס\'?\s*דגימה)[:\s]+([A-Z0-9]+)'
+
+        commitment_labels = (
+            r"(?:התחייבות|דרישה|מס(?:'|\s*)?דגימה|\bCommitment\b|\bSample\b|\bReq(?:uest)?\.?\b)"
+        )
+        commitment_pattern = commitment_labels + r"[:\s]+([A-Z0-9][A-Z0-9\-]{2,})"
         for line in lines:
-            match = re.search(commitment_pattern, line, re.IGNORECASE)
-            if match:
+            for match in re.finditer(commitment_pattern, line, re.IGNORECASE):
                 commit_num = match.group(1)
+                if commit_num.isdigit() and len(commit_num) < 4:
+                    continue
                 if commit_num not in fields["commitment_numbers"]:
                     fields["commitment_numbers"].append(commit_num)
         

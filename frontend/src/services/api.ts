@@ -112,11 +112,12 @@ export interface CommitmentRecord {
   commitment_number: FieldValue<string>;
   central_number_refs: string[];  // KEEP for backward compatibility
   sample_ids?: string[];  // NEW: explicit links to Sample[]
-  relation_status: 'clear' | 'ambiguous' | 'manual';  // LEGACY: read-only mapping
+  relation_status: 'clear' | 'ambiguous' | 'manual' | 'related' | 'unrelated' | 'unknown';
   relationship_status?: 'explicit' | 'inferred' | 'unresolved_relationship' | 'none';  // NEW: per Decision D2
   page_warnings?: string[];  // short, de-duplicated extraction warnings for the page
   source_page?: number | null;  // 1-based page of the source document
   review_required?: boolean;
+  relationship_review_required?: boolean;
   final_review_token?: string;
   final_review_confirmed?: boolean;
   final_review_confirmed_at?: string | null;
@@ -352,7 +353,7 @@ export const resolveCommitmentRelationship = async (
   relationStatus: 'related' | 'unrelated'
 ): Promise<BatchStatusResponse> => {
   const response = await apiClient.post(
-    `/batches/${batchId}/commitments/${commitmentId}/resolve`,
+    `/api/batches/${batchId}/commitments/${commitmentId}/resolve`,
     {
       central_number_refs: centralNumberRefs,
       relation_status: relationStatus
