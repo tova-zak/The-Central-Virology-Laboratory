@@ -238,6 +238,25 @@ def test_apply_verification_never_touches_human_verified():
     assert len(field_value.validation_issues) == 0  # Not added
 
 
+def test_values_match_equivalent_dates():
+    verifier = HybridVerifier()
+    assert verifier._values_match("21.06.2026", "21/06/2026") is True
+    assert verifier._values_match("18/06/2026", "2026-06-18") is True
+    assert verifier._values_match("21.06.2026", "22/06/2026") is False
+
+
+def test_apply_verification_persists_ocr_metadata():
+    verifier = HybridVerifier()
+    field_value = FieldValue[str](raw_value="21.06.2026")
+    gemini = create_mock_extraction_result({"received_date": "21.06.2026"})
+    ocr = create_mock_extraction_result({"received_date": "21/06/2026"}, model_id="ocr")
+    ocr.ocr_confidence = 95.0
+    evidence = verifier.verify_field("received_date", gemini, ocr, field_value)
+    verifier.apply_verification_to_field(field_value, evidence, "received_date")
+    assert field_value.verification_status == VerificationStatus.VERIFIED.value
+    assert field_value.ocr_value == "21/06/2026"
+
+
 def test_values_match_normalization():
     """Test value comparison with normalization."""
     verifier = HybridVerifier()
@@ -252,6 +271,7 @@ def test_values_match_normalization():
     # List comparison (order-insensitive)
     assert verifier._values_match(["123", "456"], ["456", "123"]) == True
     assert verifier._values_match(["123"], ["456"]) == False
+    assert verifier._values_match(["00121"], ["121"]) == False
     
     # None handling
     assert verifier._values_match(None, None) == True

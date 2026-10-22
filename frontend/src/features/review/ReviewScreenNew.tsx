@@ -84,7 +84,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
   const [resolveModal, setResolveModal] = useState<{
     isOpen: boolean;
     commitment: any;
-    testRecord: TestRecord;
+    testRecord: Pick<TestRecord, 'test_id' | 'central_numbers'>;
   } | null>(null);
   
   // Document viewer modal state
@@ -177,6 +177,17 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
     } catch (err: any) {
       console.error('Failed to resolve relationship:', err);
       alert(`אישור הקשר לא הצליח: ${getErrorMessage(err, 'resolve')}`);
+    }
+  };
+
+  const handleConfirmRecord = async (record: CommitmentRecord) => {
+    try {
+      const { approveRecordReview } = await import('../../services/api');
+      await approveRecordReview(batchId, record.commitment_record_id);
+      await loadBatchData();
+    } catch (err: any) {
+      console.error('Failed to confirm record review:', err);
+      alert(`אישור הרשומה נכשל: ${getErrorMessage(err, 'confirmReview')}`);
     }
   };
 
@@ -512,6 +523,9 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
           onEdit={(recordId, fieldName, value, helperText) =>
             openEditModal(recordId, fieldName, value, helperText)}
           onRejectCandidate={handleRejectCandidate}
+          onConfirmReview={handleConfirmRecord}
+          onResolveRelationship={record => setResolveModal({isOpen:true, commitment:record,
+            testRecord:{test_id:record.commitment_record_id, central_numbers:record.central_numbers!}})}
           onViewSource={record => {
             const source = record.form_id?.match(/^(.+)_page_(\d+)$/);
             if (source) setDocumentModal({ isOpen: true, documentId: source[1], pageIndex: Number(source[2]) });

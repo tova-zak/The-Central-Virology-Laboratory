@@ -26,6 +26,8 @@ interface CommitmentReviewTableProps {
   onEdit: (recordId: string, fieldName: ReviewFieldName, value: any, helperText?: string) => void;
   onRejectCandidate: (recordId: string, fieldName: ReviewFieldName, value: string) => void;
   onViewSource: (record: CommitmentRecord) => void;
+  onConfirmReview: (record: CommitmentRecord) => void;
+  onResolveRelationship?: (record: CommitmentRecord) => void;
 }
 
 const USE_CANDIDATE_HINT = 'הערך המוצע טרם אושר. ערוך אותו לפי הצורך ושמור כדי לאשר.';
@@ -43,7 +45,7 @@ function displayText(name: ReviewFieldName, field: any, value: any): string {
   return String(value);
 }
 
-export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ records, onEdit, onRejectCandidate, onViewSource }) => (
+export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ records, onEdit, onRejectCandidate, onViewSource, onConfirmReview, onResolveRelationship }) => (
   <section className="table-section commitment-review-table-section">
     <h2>בדיקת התחייבויות לפי עמוד</h2>
     <div className="table-wrapper">
@@ -58,8 +60,11 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
         {records.map(record => {
           const warnings = visiblePageWarnings(record.page_warnings);
           const page = sourcePageLabel(record);
+          const relationshipUnresolved = record.relationship_review_required || record.relation_status === 'ambiguous'
+            || record.relationship_status === 'unresolved_relationship';
           return (
-            <tr key={record.commitment_record_id}>
+            <React.Fragment key={record.commitment_record_id}>
+            <tr>
               <td className="col-page" data-label="עמוד">
                 <span className="page-number" title={record.form_id ? `מסמך: ${record.form_id}` : undefined}>{page}</span>
                 <button type="button" onClick={() => onViewSource(record)} aria-label={`צפה במקור, עמוד ${page}`}>מקור</button>
@@ -114,6 +119,24 @@ export const CommitmentReviewTable: React.FC<CommitmentReviewTableProps> = ({ re
                 );
               })}
             </tr>
+            <tr className="final-record-review">
+              <td colSpan={8}>
+                {relationshipUnresolved && <>
+                  <span role="note">הקשר בין המספרים המרכזיים להתחייבות לא נפתר. </span>
+                  {onResolveRelationship && <button type="button" aria-label={`פתרון קשר, עמוד ${page}`}
+                    onClick={() => onResolveRelationship(record)}>פתרון הקשר</button>}
+                </>}
+                {record.final_review_confirmed ? <span role="status">בדיקת הרשומה אושרה. האישור נשמר עד לשינוי הנתונים.</span> : <>
+                  <span>נדרש אישור בדיקה סופית של כל הרשומה. </span>
+                  <button type="button" onClick={() => onConfirmReview(record)}
+                    disabled={!record.final_review_token || REVIEW_FIELDS.some(name => needsReview(name, record[name])) || relationshipUnresolved}>
+                    אישור בדיקת הרשומה, עמוד {page}
+                  </button>
+                  {(REVIEW_FIELDS.some(name => needsReview(name, record[name])) || relationshipUnresolved) && <span> יש לפתור את ההערות והקשרים לפני האישור.</span>}
+                </>}
+              </td>
+            </tr>
+            </React.Fragment>
           );
         })}
       </tbody>

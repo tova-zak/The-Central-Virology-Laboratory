@@ -174,8 +174,9 @@ class BackgroundProcessor:
         # Only Gemini extraction is mocked in demo mode
         self._preprocessor = None
         self._ocr_extractor = None
+        self._ocr_load_attempted = False
         self._hybrid_verifier = None
-        
+
         # Gemini timeout and retry settings
         self._gemini_timeout_seconds = settings.extraction_timeout_seconds
         # The SDK retry layer is disabled (attempts=1), so this is the ONLY retry layer.
@@ -183,7 +184,22 @@ class BackgroundProcessor:
         self._retry_delay = 5  # 5s, then 10s between retries
         self._max_consecutive_failures = settings.extraction_max_consecutive_failures
         self._batch_deadline_seconds = settings.extraction_batch_deadline_seconds
-    
+
+    def _should_run_ocr(self) -> bool:
+        return settings.enable_ocr and self._hybrid_config.enable_ocr
+
+    def _should_run_verification(self) -> bool:
+        return settings.enable_hybrid_verification and self._hybrid_config.enable_hybrid_verification
+
+    _HYBRID_SCALAR_FIELDS = (
+        "patient_first_name",
+        "patient_last_name",
+        "patient_id_number",
+        "sender",
+        "received_date",
+        "central_numbers",
+    )
+
     def _get_preprocessor(self):
         """Lazy load image preprocessor."""
         if self._preprocessor is None and self._hybrid_config.enable_preprocessing:
@@ -205,7 +221,8 @@ class BackgroundProcessor:
                 adaptive_block_size=self._hybrid_config.adaptive_block_size,
                 adaptive_c=self._hybrid_config.adaptive_c,
                 preserve_original=self._hybrid_config.preserve_original_image,
-                max_dimension=self._hybrid_config.max_image_dimension
+                max_dimension=self._hybrid_config.max_image_dimension,
+                selection_policy=self._hybrid_config.image_selection_policy
             )
             
             self._preprocessor = ImagePreprocessor(config=config)
@@ -215,34 +232,40 @@ class BackgroundProcessor:
     
     def _get_ocr_extractor(self):
         """Lazy load OCR extractor."""
-        if self._ocr_extractor is None and self._hybrid_config.enable_ocr:
-            from app.services.ocr.tesseract_extractor import TesseractExtractor, OCRConfig, MockOCRExtractor
-            import pytesseract
-            import os
-            
-            # Set Tesseract path BEFORE checking availability
-            tesseract_path = self._hybrid_config.tesseract_cmd or os.getenv("TESSERACT_CMD")
-            if tesseract_path:
-                pytesseract.pytesseract.tesseract_cmd = tesseract_path
-                logger.info(f"✓ Set Tesseract path before availability check: {tesseract_path}")
-            
-            # Now check if Tesseract is available
-            is_available, error_msg = TesseractExtractor.check_tesseract_available()
-            
-            if is_available:
-                config = OCRConfig(
-                    languages=self._hybrid_config.ocr_languages,
-                    tesseract_cmd=tesseract_path,
-                    min_confidence=self._hybrid_config.ocr_min_confidence,
-                    extract_bboxes=self._hybrid_config.ocr_extract_bboxes,
-                    psm=self._hybrid_config.ocr_psm_mode
-                )
-                self._ocr_extractor = TesseractExtractor(config=config)
-                logger.info("✓ Tesseract OCR extractor initialized")
-            else:
-                logger.warning(f"⚠️ Tesseract not available, using mock OCR: {error_msg}")
-                self._ocr_extractor = MockOCRExtractor()
-        
+        if not self._should_run_ocr():
+            return None
+        if self._ocr_extractor is not None or self._ocr_load_attempted:
+            return self._ocr_extractor
+
+        self._ocr_load_attempted = True
+        from app.services.ocr.tesseract_extractor import TesseractExtractor, OCRConfig, MockOCRExtractor
+        import pytesseract
+        import os
+
+        tesseract_path = self._hybrid_config.tesseract_cmd or os.getenv("TESSERACT_CMD")
+        if tesseract_path:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_path
+            logger.info(f"✓ Set Tesseract path before availability check: {tesseract_path}")
+
+        is_available, error_msg = TesseractExtractor.check_tesseract_available()
+
+        if is_available:
+            config = OCRConfig(
+                languages=self._hybrid_config.ocr_languages,
+                tesseract_cmd=tesseract_path,
+                min_confidence=self._hybrid_config.ocr_min_confidence,
+                extract_bboxes=self._hybrid_config.ocr_extract_bboxes,
+                psm=self._hybrid_config.ocr_psm_mode,
+            )
+            self._ocr_extractor = TesseractExtractor(config=config)
+            logger.info("✓ Tesseract OCR extractor initialized")
+        elif settings.demo_mode:
+            logger.warning(f"⚠️ Tesseract not available in DEMO mode, using mock OCR: {error_msg}")
+            self._ocr_extractor = MockOCRExtractor()
+        else:
+            logger.error(f"❌ Tesseract not available in LIVE mode (no mock fallback): {error_msg}")
+            self._ocr_extractor = None
+
         return self._ocr_extractor
     
     def _get_hybrid_verifier(self):
@@ -261,6 +284,70 @@ class BackgroundProcessor:
             logger.info("✓ Hybrid verifier initialized")
         
         return self._hybrid_verifier
+
+    async def _run_ocr_for_page(
+        self,
+        *,
+        batch_id: str,
+        document_id: str,
+        page_index: int,
+        original_image_bytes: bytes,
+    ):
+        if not self._should_run_ocr():
+            return None, []
+
+        ocr_extractor = self._get_ocr_extractor()
+        if ocr_extractor is None:
+            if settings.demo_mode:
+                return None, []
+            return None, [
+                "OCR_UNAVAILABLE: Tesseract is required but not installed or TESSERACT_CMD is invalid"
+            ]
+
+        mode = "DEMO" if settings.demo_mode else "LIVE"
+        logger.info(f"[{batch_id}][{document_id}] Page {page_index}: Running OCR ({mode})")
+        try:
+            ocr_result = await asyncio.to_thread(
+                ocr_extractor.extract,
+                image=original_image_bytes,
+                document_id=document_id,
+                page_index=page_index,
+            )
+            logger.info(
+                f"[{batch_id}][{document_id}] Page {page_index}: OCR completed "
+                f"model={ocr_result.model_id} in {ocr_result.processing_time_ms:.0f}ms"
+            )
+            extra = []
+            if not settings.demo_mode and ocr_result.model_id == "mock-ocr":
+                extra.append("OCR_MISCONFIG: Mock OCR was used in LIVE mode")
+            return ocr_result, extra
+        except Exception as ocr_error:
+            logger.warning(f"[{batch_id}][{document_id}] Page {page_index}: OCR failed: {ocr_error}")
+            return None, [f"OCR_FAILED: {type(ocr_error).__name__}"]
+
+    def _apply_hybrid_verification(
+        self,
+        page_record: TestRecord,
+        extraction_result,
+        ocr_result,
+    ) -> None:
+        if not self._should_run_verification() or ocr_result is None:
+            return
+        verifier = self._get_hybrid_verifier()
+        if not verifier:
+            return
+
+        for field_name in self._HYBRID_SCALAR_FIELDS:
+            field_value = getattr(page_record, field_name, None)
+            if field_value is None:
+                continue
+            evidence = verifier.verify_field(
+                field_name=field_name,
+                gemini_result=extraction_result,
+                ocr_result=ocr_result,
+                current_field_value=field_value,
+            )
+            verifier.apply_verification_to_field(field_value, evidence, field_name)
     
     def start_processing(self, batch_id: str, retry_targets=None) -> ProcessingJob:
         """Start processing a batch in background.
@@ -425,20 +512,41 @@ class BackgroundProcessor:
                                              "pages_succeeded": pages_succeeded, "pages_failed": pages_failed})
                         
                         try:
-                            # Extract fields from this page
+                            original_bytes = image_bytes
+                            selected_method = "original"
+                            if self._hybrid_config.enable_preprocessing and settings.enable_preprocessing:
+                                preprocessor = self._get_preprocessor()
+                                if preprocessor:
+                                    image_bytes, method = preprocessor.select_variant(
+                                        original_bytes, preprocessor.preprocess(original_bytes))
+                                    selected_method = method.value
                             extraction_result = await self._extract_with_retry(
                                 image_bytes=image_bytes,
                                 document_id=document_id,
                                 page_index=page_index,
                                 deadline=batch_deadline
                             )
+
+                            ocr_result, ocr_warnings = await self._run_ocr_for_page(
+                                batch_id=batch_id,
+                                document_id=document_id,
+                                page_index=page_index,
+                                original_image_bytes=original_bytes,
+                            )
+                            if ocr_warnings:
+                                extraction_result.warnings = list(
+                                    getattr(extraction_result, "warnings", None) or []
+                                ) + ocr_warnings
                             
                             # Create ONE CommitmentRecord from this page
                             commitment = self._create_commitment_from_page(
                                 extraction_result=extraction_result,
                                 document_id=document_id,
-                                page_index=page_index
+                                page_index=page_index,
+                                ocr_result=ocr_result,
                             )
+                            for name in _REVIEWABLE_FIELDS:
+                                getattr(commitment, name).preprocessing_method = selected_method
                             
                             commitment_records.append(commitment)
                             
@@ -656,7 +764,8 @@ class BackgroundProcessor:
         self,
         extraction_result,
         document_id: str,
-        page_index: int
+        page_index: int,
+        ocr_result=None,
     ) -> CommitmentRecord:
         """Create exactly ONE CommitmentRecord from a single page extraction.
         
@@ -721,6 +830,7 @@ class BackgroundProcessor:
             _map_extraction_to_test_record, _detect_uncertainty, _validate_record,
         )
         page_record = _map_extraction_to_test_record(extraction_result, document_id, page_index)
+        self._apply_hybrid_verification(page_record, extraction_result, ocr_result)
         _detect_uncertainty(page_record, extraction_result)
         _validate_record(page_record)
         central_numbers = list(page_record.central_numbers.raw_value or [])  # blank/filler items removed
@@ -857,8 +967,7 @@ class BackgroundProcessor:
                 preprocessor = self._get_preprocessor()
                 if preprocessor:
                     preprocessed_variants = preprocessor.preprocess(image_bytes)
-                    if preprocessed_variants:
-                        image_bytes = preprocessed_variants[0][0]
+                    image_bytes, _method = preprocessor.select_variant(image_bytes, preprocessed_variants)
             
             # Extract with Gemini/Mock
             extraction_result = await self._extract_with_retry(
