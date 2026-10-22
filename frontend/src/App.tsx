@@ -66,6 +66,10 @@ function App() {
               <h1 className="tzalul-header-title">המעבדה המרכזית לנגיפים</h1>
             </div>
           </div>
+          <div className="institutional-logos">
+            <img className="institutional-logo institutional-logo-ministry" src="/ministry-of-health.png" alt="משרד הבריאות — מדינת ישראל" />
+            <img className="institutional-logo institutional-logo-lab" src="/central-virology-laboratory.png" alt="המעבדה המרכזית לנגיפים בשיבא" />
+          </div>
         </header>
 
         {/* Main Content */}
