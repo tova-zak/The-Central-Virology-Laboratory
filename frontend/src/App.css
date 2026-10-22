@@ -29,6 +29,10 @@
   align-items: center;
   justify-content: space-between;
   direction: rtl;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
 .tzalul-header-brand {
@@ -152,10 +156,13 @@
   direction: rtl;
 }
 
-.env-banner-staging {
-  background: var(--error-bg);
-  border-color: var(--error-border);
-  color: var(--error-text);
+/* Small nonblocking staging disclosure, outside the main workflow */
+.env-footnote {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  text-align: center;
+  direction: rtl;
 }
 
 /* Sign-in form */
