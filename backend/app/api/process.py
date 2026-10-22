@@ -9,7 +9,9 @@ from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.services.processing.background import get_processor, ProcessingStatus, find_retry_targets
 from app.services.validation import validator
-from app.services.review_rules import field_review_reasons, annotate_record
+from app.services.review_rules import (field_review_reasons, annotate_record, record_review_token,
+                                       final_review_confirmed, invalidate_changed_final_review, effective_value,
+                                       relationship_review_required)
 from app.services.export import ExcelExporter
 from app.services.storage import get_storage_backend
 from app.domain.models import (
@@ -23,6 +25,12 @@ router = APIRouter(prefix="/api", tags=["process"])
 
 # Use the same configured durable backend as uploads and processing.
 _storage = get_storage_backend()
+
+
+def _save_reviewed_batch(batch_id: str, batch_data: dict) -> None:
+    for record in batch_data.get("commitment_records", []):
+        invalidate_changed_final_review(record)
+    _storage.save_batch(batch_id, batch_data)
 
 
 @router.post("/batches/{batch_id}/process", status_code=status.HTTP_202_ACCEPTED)
@@ -279,6 +287,14 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
     
     # Update the field - save to reviewed_value
     new_value = update.get("new_value")
+    # null means no reviewed decision, never an explicitly confirmed empty string.
+    if field_name in ("central_numbers", "commitment_number") and isinstance(new_value, list):
+        if any(not isinstance(v, str) or not v.strip() for v in new_value):
+            raise HTTPException(400, "Numbers must be non-empty strings")
+    elif not isinstance(new_value, str) or field_name == "central_numbers":
+        raise HTTPException(400, "A reviewed scalar must be a string; central numbers must be a list of strings")
+    if isinstance(new_value, str) and not new_value.strip():
+        new_value = ""
     
     # CONFIRMED-EMPTY PROTECTION: prevent setting non-confirmable fields to empty
     if field_name in ['patient_id_number', 'central_numbers']:
@@ -309,9 +325,27 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
             )
         new_value = assessment.normalized or new_value
     if field_name == "commitment_number":
+        editing_list = isinstance(new_value, list)
+        if editing_list:
+            if any(not isinstance(value, str) or not value.strip() for value in new_value):
+                raise HTTPException(400, "יש להזין כל מספר התחייבות כמחרוזת נפרדת שאינה ריקה")
+            numbers = list(dict.fromkeys(value.strip() for value in new_value))
+            current = [effective_value(field)] if effective_value(field) else []
+            for candidate in field.get("candidates") or []:
+                if (candidate.get("reason") == "multiple_commitments_on_page" and
+                        candidate.get("status") != "rejected" and candidate.get("value") not in current):
+                    current.append(candidate.get("value"))
+            if numbers != current:
+                for candidate in field.get("candidates") or []:
+                    if candidate.get("reason") == "multiple_commitments_on_page":
+                        candidate["status"] = "rejected"
+                field.setdefault("candidates", []).extend(
+                    {"value": number, "reason": "multiple_commitments_on_page", "status": "pending"}
+                    for number in numbers[1:])
+            new_value = numbers[0] if numbers else ""
         # A correction replaces the misread number: its stand-in candidate must not be exported too.
         previous_raw = field.get("raw_value")
-        if previous_raw is not None and new_value != previous_raw:
+        if not editing_list and previous_raw is not None and new_value != previous_raw:
             for candidate in field.get("candidates") or []:
                 if candidate.get("value") == previous_raw:
                     candidate["status"] = "rejected"
@@ -329,7 +363,7 @@ async def update_field(batch_id: str, test_id: str, field_name: str, update: dic
         field["validation_issues"] = []
     
     # Save back to persistent storage
-    _storage.save_batch(batch_id, batch_data)
+    _save_reviewed_batch(batch_id, batch_data)
     
     # Recalculate export eligibility
     commitment_records = batch_data.get("commitment_records", [])
@@ -372,7 +406,7 @@ async def reject_field_candidate(batch_id: str, test_id: str, field_name: str, b
     if candidate is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
     candidate["status"] = "rejected"
-    _storage.save_batch(batch_id, batch_data)
+    _save_reviewed_batch(batch_id, batch_data)
     can_export, blockers = _check_export_eligibility_commitments(batch_data.get("commitment_records", []))
     return {"field": field, "can_export": can_export, "blockers": blockers}
 
@@ -425,7 +459,8 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
     if field_name == "received_date":
         from app.services.validation.date_normalizer import assess_date
         # Assess the reviewed value when present, else the ORIGINAL text so a century inference stays visible.
-        effective = next((field.get(k) for k in ("reviewed_value", "raw_value", "normalized_value") if field.get(k)), None)
+        effective = (field["reviewed_value"] if field.get("reviewed_value") is not None
+                     else next((field.get(k) for k in ("raw_value", "normalized_value") if field.get(k) is not None), None))
         date_assessment = assess_date(effective) if effective else None
         if date_assessment and (date_assessment.status in ("invalid_date", "unrecognized")
                                 or (date_assessment.status == "future" and date_assessment.century_inferred)):
@@ -435,16 +470,9 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
             )
     if field_name in ['patient_id_number', 'central_numbers']:
         # Check if the field is empty
-        reviewed_val = field.get("reviewed_value")
-        normalized_val = field.get("normalized_value")
-        raw_val = field.get("raw_value")
-        
-        # If all values are empty/None/empty list, reject confirmation
-        is_empty = (
-            (not reviewed_val or (isinstance(reviewed_val, list) and len(reviewed_val) == 0)) and
-            (not normalized_val or (isinstance(normalized_val, list) and len(normalized_val) == 0)) and
-            (not raw_val or (isinstance(raw_val, list) and len(raw_val) == 0))
-        )
+        from app.services.review_rules import is_empty_value, has_blank_item
+        current = effective_value(field)
+        is_empty = is_empty_value(current) or has_blank_item(current)
         
         if is_empty:
             raise HTTPException(
@@ -462,14 +490,43 @@ async def verify_field(batch_id: str, test_id: str, field_name: str):
 
     # Mark as verified
     field["review_state"] = "human_verified"
+    if field_name in CONFIRMABLE_EMPTY_FIELDS:
+        from app.services.review_rules import is_empty_value
+        if is_empty_value(effective_value(field)):
+            field["reviewed_value"] = ""  # Persist the explicit human confirmation, distinct from null.
     
     # If it was missing, keep it as missing but verified
     # This allows verified empty fields
     
     # Save back to persistent storage
-    _storage.save_batch(batch_id, batch_data)
+    _save_reviewed_batch(batch_id, batch_data)
     
     return test_record_dict
+
+
+@router.post("/batches/{batch_id}/commitments/{commitment_id}/confirm-review")
+async def confirm_record_review(batch_id: str, commitment_id: str, body: dict):
+    """Explicit whole-record confirmation; never upgrades individual field review states."""
+    batch = _storage.load_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "האצווה לא נמצאה")
+    record = next((r for r in batch.get("commitment_records", [])
+                   if r.get("commitment_record_id") == commitment_id), None)
+    if record is None:
+        raise HTTPException(404, "הרשומה לא נמצאה באצווה זו")
+    if body.get("reviewed") is not True:
+        raise HTTPException(400, "נדרש אישור מפורש לבדיקת כל שבעת השדות ברשומה")
+    token = record_review_token(record)
+    if body.get("review_token") != token:
+        raise HTTPException(409, "נתוני הרשומה השתנו. יש לרענן ולבדוק אותם שוב לפני האישור")
+    allowed, blockers = _check_export_eligibility_commitments([record], require_final_review=False)
+    if not allowed:
+        raise HTTPException(400, {"message": "יש לפתור את ההערות לפני אישור הרשומה", "blockers": blockers})
+    if not final_review_confirmed(record):
+        record["final_review_fingerprint"] = token
+        record["final_review_confirmed_at"] = datetime.now(timezone.utc).isoformat()
+        _save_reviewed_batch(batch_id, batch)
+    return annotate_record(record)
 
 
 @router.get("/batches/{batch_id}/export-check")
@@ -962,7 +1019,7 @@ CONFIRMABLE_EMPTY_FIELDS = (
 )
 
 
-def _check_export_eligibility_commitments(commitment_records: list) -> tuple[bool, list[str]]:
+def _check_export_eligibility_commitments(commitment_records: list, *, require_final_review: bool = True) -> tuple[bool, list[str]]:
     """Check if commitment records can be exported (one-page-one-commitment model).
     
     STRICT policy: block on:
@@ -979,9 +1036,11 @@ def _check_export_eligibility_commitments(commitment_records: list) -> tuple[boo
 
     for commitment in commitment_records:
         commitment_id = commitment.get("commitment_record_id", "unknown")
+        if require_final_review and not final_review_confirmed(commitment):
+            blockers.append(f"{commitment_id}: final_record_review_required")
         if commitment.get("status") in ("pending", "incomplete"):
             blockers.append(f"{commitment_id}: incomplete_extraction")
-        if commitment.get("relationship_status") == "unresolved_relationship":
+        if relationship_review_required(commitment):
             blockers.append(f"{commitment_id}: unresolved_relationship")
         for field_name in ("patient_first_name", "patient_last_name", "patient_id_number",
                            "sender", "received_date", "central_numbers", "commitment_number"):
@@ -1067,7 +1126,7 @@ async def assign_commitment_to_test(
         )
     
     # Save updated batch
-    _storage.save_batch(batch_id, batch_data)
+    _save_reviewed_batch(batch_id, batch_data)
     
     # Return updated batch with classification and status
     return _add_record_statuses(batch_data)
@@ -1121,9 +1180,22 @@ async def resolve_commitment_relationship(
     commitment_found = False
     for commitment in batch_data.get("commitment_records", []):
         if commitment.get("commitment_record_id") == commitment_id:
+            # A relationship may only point to numbers on this record (or its legacy test).
+            source = commitment
+            if not source.get("central_numbers"):
+                source = next((r for r in batch_data.get("test_records", [])
+                               if r.get("test_id") == commitment.get("test_id")), {})
+            available = effective_value(source.get("central_numbers") or {}) or []
+            if (not isinstance(central_number_refs, list)
+                    or any(not isinstance(v, str) or not v.strip() or v not in available for v in central_number_refs)
+                    or (new_status == "related" and not central_number_refs)
+                    or (new_status == "unrelated" and central_number_refs)):
+                raise HTTPException(400, "Select non-empty central numbers from this record, or explicitly disconnect")
+            central_number_refs = list(dict.fromkeys(central_number_refs))
             commitment_found = True
             commitment["central_number_refs"] = central_number_refs
             commitment["relation_status"] = new_status
+            commitment["relationship_status"] = "explicit" if new_status == "related" else "none"
             break
     
     if not commitment_found:
@@ -1133,7 +1205,7 @@ async def resolve_commitment_relationship(
         )
     
     # Save updated batch
-    _storage.save_batch(batch_id, batch_data)
+    _save_reviewed_batch(batch_id, batch_data)
     
     # Return updated batch with classification and status
     return _add_record_statuses(batch_data)

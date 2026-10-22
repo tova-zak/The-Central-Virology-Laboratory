@@ -12,6 +12,7 @@ import './ReviewScreenExtras.css';
 import { 
   getBatchStatus, 
   updateField,
+  confirmRecordReview,
   rejectFieldCandidate,
   checkExportEligibility,
   BatchStatusResponse,
@@ -84,7 +85,7 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
   const [resolveModal, setResolveModal] = useState<{
     isOpen: boolean;
     commitment: any;
-    testRecord: TestRecord;
+    testRecord: Pick<TestRecord, 'test_id' | 'central_numbers'>;
   } | null>(null);
   
   // Document viewer modal state
@@ -148,6 +149,19 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
     } catch (err: any) {
       console.error('Failed to reject candidate:', err);
       alert(`דחיית המועמד נכשלה: ${getErrorMessage(err, 'rejectCandidate')}`);
+    }
+  };
+
+  const handleConfirmRecord = async (record: import('../../services/api').CommitmentRecord) => {
+    if (!record.final_review_token || !window.confirm('בדקתי מול מסמך המקור את כל שבעת השדות ברשומה, כולל ערכים ללא התראות וכל המספרים הנוספים. האם לאשר את בדיקת הרשומה?')) return;
+    try {
+      await confirmRecordReview(batchId, record.commitment_record_id, record.final_review_token);
+      await loadBatchData();
+    } catch (err: any) {
+      alert(err.response?.status === 409
+        ? 'נתוני הרשומה השתנו. יש לרענן ולבדוק שוב לפני האישור.'
+        : 'אישור הרשומה לא נשמר. יש לרענן ולפתור את ההערות לפני ניסיון נוסף.');
+      await loadBatchData();
     }
   };
 
@@ -436,8 +450,8 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
       isOpen: true,
       testId,
       fieldName,
-      currentValue,
-      fieldType: fieldName === 'central_numbers' ? 'list' : 'text',
+      currentValue: fieldName === 'commitment_number' && !Array.isArray(currentValue) ? (currentValue ? [currentValue] : []) : currentValue,
+      fieldType: ['central_numbers', 'commitment_number'].includes(fieldName) ? 'list' : 'text',
       helperText
     });
   };
@@ -512,6 +526,9 @@ export const ReviewScreenNew: React.FC<ReviewScreenProps> = ({ batchId, onBack, 
           onEdit={(recordId, fieldName, value, helperText) =>
             openEditModal(recordId, fieldName, value, helperText)}
           onRejectCandidate={handleRejectCandidate}
+          onConfirmReview={handleConfirmRecord}
+          onResolveRelationship={record => setResolveModal({isOpen:true, commitment:record,
+            testRecord:{test_id:record.commitment_record_id, central_numbers:record.central_numbers!}})}
           onViewSource={record => {
             const source = record.form_id?.match(/^(.+)_page_(\d+)$/);
             if (source) setDocumentModal({ isOpen: true, documentId: source[1], pageIndex: Number(source[2]) });

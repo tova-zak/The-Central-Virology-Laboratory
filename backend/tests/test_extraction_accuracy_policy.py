@@ -78,6 +78,11 @@ def _stored(client):
 
 
 def _export_rows(client, tmp_path):
+    data = client.get(f"/api/batches/{BATCH}").json()
+    for record in data["commitment_records"]:
+        approved = client.post(f"/api/batches/{BATCH}/commitments/{record['commitment_record_id']}/confirm-review",
+                               json={"reviewed": True, "review_token": record["final_review_token"]})
+        assert approved.status_code == 200
     response = client.post(f"/api/batches/{BATCH}/export")
     assert response.status_code == 200
     out = tmp_path / "read_back.xlsx"

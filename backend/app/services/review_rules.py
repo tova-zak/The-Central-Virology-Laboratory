@@ -8,6 +8,8 @@ Works on the persisted dict form of a FieldValue so the API response, the export
 summary all agree.
 """
 import re
+import hashlib
+import json
 from typing import Any, Optional
 
 REVIEW_FIELDS = ("patient_first_name", "patient_last_name", "patient_id_number",
@@ -60,6 +62,12 @@ def effective_value(field: dict) -> Any:
 
 def is_empty_value(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip()) or value == []
+
+
+def relationship_review_required(record: dict) -> bool:
+    """Both persisted relationship representations must be free of unresolved ambiguity."""
+    return (record.get("relation_status") == "ambiguous" or
+            record.get("relationship_status") in ("unresolved_relationship", "unknown", "ambiguous"))
 
 
 def has_blank_item(value: Any) -> bool:
@@ -156,6 +164,34 @@ def source_page_of(record: dict) -> Optional[int]:
     return int(match.group(1)) + 1 if match else None
 
 
+def record_review_token(record: dict) -> str:
+    """Hash review-relevant data only; derived UI flags and storage timestamps are excluded."""
+    field_keys = ("extraction_state", "validation_issues", "extraction_notes", "candidates")
+    snapshot = {}
+    for name in REVIEW_FIELDS:
+        field = record.get(name) or {}
+        snapshot[name] = {key: field.get(key) for key in field_keys}
+        snapshot[name]["value"] = effective_value(field)
+        snapshot[name]["review_reasons"] = field_review_reasons(name, field)
+    for key in ("commitment_record_id", "form_id", "source_page", "relationship_status",
+                "relation_status", "central_number_refs", "sample_ids", "test_id", "page_warnings", "status"):
+        snapshot[key] = record.get(key)
+    snapshot["source_page"] = source_page_of(record)
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def final_review_confirmed(record: dict) -> bool:
+    return bool(record.get("final_review_confirmed_at") and
+                record.get("final_review_fingerprint") == record_review_token(record))
+
+
+def invalidate_changed_final_review(record: dict) -> None:
+    if record.get("final_review_fingerprint") and not final_review_confirmed(record):
+        record["final_review_fingerprint"] = None
+        record["final_review_confirmed_at"] = None
+
+
 def annotate_record(record: dict) -> dict:
     """Add derived review_required / review_reasons_he to each field plus record-level flags (in place)."""
     any_required = False
@@ -168,10 +204,13 @@ def annotate_record(record: dict) -> dict:
         field["review_required"] = bool(reasons)
         field["review_reasons_he"] = reasons
         any_required = any_required or bool(reasons)
-    if record.get("relationship_status") == "unresolved_relationship":
+    record["relationship_review_required"] = relationship_review_required(record)
+    if record["relationship_review_required"]:
         any_required = True
         record_reasons.append("הקשר בין המספרים המרכזיים להתחייבות לא נפתר.")
     record["source_page"] = source_page_of(record)
+    record["final_review_token"] = record_review_token(record)
+    record["final_review_confirmed"] = final_review_confirmed(record)
     record["review_required"] = any_required
     record["review_reasons_he"] = record_reasons
     return record

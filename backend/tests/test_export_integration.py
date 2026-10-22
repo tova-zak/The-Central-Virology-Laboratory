@@ -14,7 +14,7 @@ def _field(value, verified=True):
     return FieldValue(
         raw_value=value,
         normalized_value=value,
-        extraction_state=ExtractionState.found,
+        extraction_state=ExtractionState.found if verified else ExtractionState.uncertain,
         review_state=ReviewState.human_verified if verified else ReviewState.pending,
     )
 
@@ -55,6 +55,13 @@ def _save(storage, record, batch_id):
     return batch_id
 
 
+def _approve_record(http, batch_id):
+    record = http.get(f"/api/batches/{batch_id}").json()["commitment_records"][0]
+    response = http.post(f"/api/batches/{batch_id}/commitments/{record['commitment_record_id']}/confirm-review",
+                         json={"reviewed": True, "review_token": record["final_review_token"]})
+    assert response.status_code == 200
+
+
 def test_export_blocked_when_uncertain_field_not_resolved(client):
     """Export is blocked while a field is not human_verified."""
     http, storage = client
@@ -72,6 +79,7 @@ def test_export_succeeds_after_human_verification(client):
     """Export works once every field is human_verified."""
     http, storage = client
     batch_id = _save(storage, _record(), "test_batch_export_success")
+    _approve_record(http, batch_id)
 
     response = http.post(f"/api/batches/{batch_id}/export")
 
@@ -86,6 +94,7 @@ def test_export_check_endpoint_separate_from_export(client, tmp_path):
     http, storage = client
     blocked = _save(storage, _record("rec_blocked", unreviewed=("sender",)), "test_batch_check_blocked")
     ready = _save(storage, _record("rec_ready"), "test_batch_check_ready")
+    _approve_record(http, ready)
 
     response = http.get(f"/api/batches/{blocked}/export-check")
     assert response.status_code == 200

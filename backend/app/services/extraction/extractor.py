@@ -38,6 +38,7 @@ class ExtractionResult:
     prompt_version: str
     processing_time_ms: float
     raw_response: Any = None  # Optional, for debugging
+    ocr_confidence: float | None = None  # Measured OCR mean, never a model confidence estimate
 
 
 class Extractor(ABC):

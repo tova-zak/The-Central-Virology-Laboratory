@@ -158,6 +158,7 @@ const EXPORT_BLOCKER_FIELDS = [
 
 /** Hebrew text for one export blocker string returned by `export-check`. */
 export function formatExportBlocker(raw: string): string {
+  if (raw.endsWith(': final_record_review_required')) return 'נדרש אישור בדיקה סופית של כל הרשומה לפני ייצוא.';
   const orphan = raw.match(/^orphaned_commitment:\s*(.+)$/);
   if (orphan) return `התחייבות ${orphan[1]} לא שויכה לאף טופס`;
 

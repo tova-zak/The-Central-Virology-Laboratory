@@ -130,6 +130,13 @@ class HybridVerifier:
         # Extract values from results
         gemini_value = gemini_result.fields.get(field_name)
         ocr_value = ocr_result.fields.get(field_name) if ocr_result else None
+        if ocr_result:
+            confidence = getattr(ocr_result, "ocr_confidence", None)
+            low_confidence = (confidence is not None and confidence < self.config.ocr_confidence_threshold)
+            low_confidence = low_confidence or any(str(w).startswith("OCR_LOW_CONFIDENCE:")
+                                                  for w in ocr_result.warnings or [])
+            if not self.config.enable_ocr_verification or low_confidence:
+                ocr_value = None  # Weak OCR cannot establish agreement or a contradiction.
         
         # Normalize empty lists to None for comparison
         if isinstance(gemini_value, list) and len(gemini_value) == 0:
@@ -293,6 +300,10 @@ class HybridVerifier:
             # Neither source found anything
             if field_value.extraction_state != ExtractionState.missing:
                 field_value.extraction_state = ExtractionState.missing
+
+        if evidence.ocr_value is not None:
+            field_value.ocr_value = evidence.ocr_value
+        field_value.verification_status = evidence.verification_status.value
         
         # Rule 3: Run deterministic validation (ID checksum, date format)
         if evidence.gemini_value is not None:
@@ -324,19 +335,24 @@ class HybridVerifier:
         if value1 is None or value2 is None:
             return False
         
-        # Handle lists
+        # Handle lists (order-insensitive; preserve leading zeros on numeric tokens)
         if isinstance(value1, list) and isinstance(value2, list):
-            # Normalize and compare as sets (order-insensitive)
-            set1 = {str(v).strip().lower() for v in value1}
-            set2 = {str(v).strip().lower() for v in value2}
+            set1 = {self._compare_token(v) for v in value1}
+            set2 = {self._compare_token(v) for v in value2}
             return set1 == set2
         
         # Handle strings
-        str1 = str(value1).strip().lower()
-        str2 = str(value2).strip().lower()
+        str1 = self._compare_token(value1)
+        str2 = self._compare_token(value2)
         
         # Direct match
         if str1 == str2:
+            return True
+
+        # Equivalent calendar dates (e.g. 21.06.2026 vs 21/06/2026 vs 2026-06-21)
+        date1 = self._normalized_date(str(value1).strip())
+        date2 = self._normalized_date(str(value2).strip())
+        if date1 and date2 and date1 == date2:
             return True
         
         # Hebrew RTL fallback: OCR often returns Hebrew text reversed
@@ -350,6 +366,22 @@ class HybridVerifier:
     def _contains_hebrew(self, text: str) -> bool:
         """Check if text contains Hebrew characters (U+0590 to U+05FF)."""
         return any('\u0590' <= c <= '\u05FF' for c in text)
+
+    def _compare_token(self, value) -> str:
+        text = str(value).strip()
+        if text.isdigit():
+            return text
+        return text.lower()
+
+    def _normalized_date(self, text: str) -> Optional[str]:
+        from app.services.validation.date_normalizer import assess_date
+
+        if not text:
+            return None
+        result = assess_date(text)
+        if result.status in ("ok", "century_inferred", "future") and result.normalized:
+            return result.normalized
+        return None
     
     def _validate_field(self, field_name: str, value) -> List[ValidationIssue]:
         """Run deterministic validation on a field value.

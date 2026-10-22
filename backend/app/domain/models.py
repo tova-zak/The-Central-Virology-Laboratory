@@ -222,3 +222,7 @@ class CommitmentRecord(BaseModel):
 
     # 1-based page of the source document this record was extracted from (None when unknown, e.g. legacy records)
     source_page: Optional[int] = None
+
+    # Explicit whole-record human review, bound to the reviewed data (not field auto-acceptance).
+    final_review_fingerprint: Optional[str] = None
+    final_review_confirmed_at: Optional[str] = None
