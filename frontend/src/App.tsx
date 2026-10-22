@@ -3,7 +3,7 @@ import './App.css'
 import { healthCheck, HealthResponse, apiClient } from './services/api'
 import { WorkflowScreen } from './features/workflow/WorkflowScreen'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { getHealthStatusLabel, AUTH_TEXT } from './utils/hebrewMessages'
+import { AUTH_TEXT } from './utils/hebrewMessages'
 
 function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -86,18 +86,6 @@ function App() {
           
           {health && (
             <>
-              <div className="status-box success-box">
-                <div className="status-content">
-                  <h3><span aria-hidden="true">✓</span> המערכת פעילה</h3>
-                  <div className="status-details">
-                    <span><strong>שירות:</strong> <bdi dir="ltr">{health.service}</bdi></span>
-                    <span><strong>גרסה:</strong> <bdi dir="ltr">{health.version}</bdi></span>
-                    <span><strong>מודל בינה מלאכותית:</strong> <bdi dir="ltr">{health.model}</bdi></span>
-                    <span><strong>מצב השרת:</strong> {getHealthStatusLabel(health.status)}</span>
-                  </div>
-                </div>
-              </div>
-
               {health.demo_mode && <p role="status" className="env-banner env-banner-demo">{AUTH_TEXT.demoBanner}</p>}
               {health.requires_auth && !authenticated ? (
                 <form onSubmit={signIn} className="auth-form">
