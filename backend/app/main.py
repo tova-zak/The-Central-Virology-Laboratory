@@ -19,6 +19,8 @@ truststore.inject_into_ssl()
 
 @asynccontextmanager
 async def lifespan(app):
+    from app.core.ocr_diagnostics import log_ocr_startup
+    await run_in_threadpool(log_ocr_startup, settings)
     if os.getenv("RENDER") and not settings.is_cloud:
         raise RuntimeError("Render requires a cloud deployment mode")
     settings.validate_deployment()
