@@ -99,9 +99,6 @@ function App() {
               </div>
 
               {health.demo_mode && <p role="status" className="env-banner env-banner-demo">{AUTH_TEXT.demoBanner}</p>}
-              {health.environment === 'staging-real' && <p role="status" className="env-banner env-banner-staging">
-                {AUTH_TEXT.stagingBanner}
-              </p>}
               {health.requires_auth && !authenticated ? (
                 <form onSubmit={signIn} className="auth-form">
                   <label className="auth-field">{AUTH_TEXT.username} <input dir="ltr" autoComplete="username" value={username}
@@ -115,6 +112,9 @@ function App() {
             </>
           )}
         </main>
+        {health?.environment === 'staging-real' && (
+          <footer className="env-footnote">{AUTH_TEXT.stagingBanner}</footer>
+        )}
       </div>
     </ErrorBoundary>
   )
