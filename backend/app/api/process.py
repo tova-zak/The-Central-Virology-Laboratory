@@ -129,26 +129,45 @@ async def retry_failed_pages(batch_id: str):
             "pages_to_retry": len(targets), "progress": job.progress}
 
 
-def _report_interrupted_if_stale(batch_data: Dict[str, Any]) -> Dict[str, Any]:
+def _report_interrupted_if_stale(batch_id: str, batch_data: Dict[str, Any]) -> Dict[str, Any]:
     """A persisted queued/processing batch with no in-memory job can never finish (the worker was
-    lost, e.g. server restart). Report a terminal state instead of letting clients poll forever.
-    The stored record is left untouched so the manual-recovery rules still apply."""
+    lost, e.g. server restart). Report a terminal state and persist it to prevent infinite polling.
+    
+    Uses saved_at timestamp + grace period to detect truly stuck batches.
+    Grace period = batch_deadline + 120s buffer to avoid false positives during active processing.
+    """
     if batch_data.get("status") not in ("queued", "processing"):
         return batch_data
+    
+    # Check timestamp to avoid marking active jobs as failed
     try:
         saved_at = datetime.fromisoformat(str(batch_data.get("saved_at")))
         if saved_at.tzinfo is None:
             saved_at = saved_at.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return batch_data
+    
     grace_seconds = settings.extraction_batch_deadline_seconds + 120
-    if (datetime.now(timezone.utc) - saved_at).total_seconds() <= grace_seconds:
-        return batch_data
+    elapsed = (datetime.now(timezone.utc) - saved_at).total_seconds()
+    
+    if elapsed <= grace_seconds:
+        return batch_data  # Still within deadline - might be processing
+    
+    # Beyond grace period with no active worker = interrupted
     interrupted = dict(batch_data)
     interrupted["status"] = "failed"
     interrupted["errors"] = [*batch_data.get("errors", []), {
         "error": "Processing was interrupted (the worker was lost, e.g. server restart); upload the documents again",
-        "error_code": "processing_interrupted"}]
+        "error_code": "processing_interrupted",
+        "elapsed_seconds": int(elapsed)}]
+    
+    # Persist the failure state so all clients see it
+    try:
+        _storage.save_batch(batch_id, interrupted)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to persist interrupted status for {batch_id}: {e}")
+    
     return interrupted
 
 
@@ -200,7 +219,7 @@ async def get_batch_status(batch_id: str):
     # No active job - try to load from persistent storage
     batch_data = _storage.load_batch(batch_id)
     if batch_data:
-        batch_data = _report_interrupted_if_stale(batch_data)
+        batch_data = _report_interrupted_if_stale(batch_id, batch_data)
     
     if batch_data:
         # Add record_status to each test_record

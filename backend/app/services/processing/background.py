@@ -118,17 +118,22 @@ class ProcessingStatus(str, Enum):
 
 
 class ProcessingJob:
-    """Represents a background processing job."""
+    """Represents a background processing job with heartbeat tracking."""
     
     def __init__(self, batch_id: str):
         self.batch_id = batch_id
         self.status = ProcessingStatus.QUEUED
         self.started_at: Optional[datetime] = None
         self.completed_at: Optional[datetime] = None
+        self.last_heartbeat: Optional[datetime] = None  # Track liveness
         self.progress = {"current": 0, "total": 0, "current_file": None}
         self.error: Optional[str] = None
         self.task: Optional[asyncio.Task] = None
         self.retry_targets = None  # set of (document_id, page_index) for a selective retry run, else None
+    
+    def update_heartbeat(self):
+        """Update heartbeat timestamp to show job is alive."""
+        self.last_heartbeat = datetime.utcnow()
 
 
 class BackgroundProcessor:
@@ -405,6 +410,17 @@ class BackgroundProcessor:
         batch_id = job.batch_id
         job.status = ProcessingStatus.PROCESSING
         job.started_at = datetime.utcnow()
+        job.update_heartbeat()  # Initial heartbeat
+        
+        # Update persisted status to processing with timestamp
+        try:
+            batch_data = self._storage.load_batch(batch_id) or {}
+            batch_data["status"] = "processing"
+            batch_data["saved_at"] = datetime.now(timezone.utc).isoformat()
+            self._storage.save_batch(batch_id, batch_data)
+        except Exception as e:
+            logger.warning(f"[{batch_id}] Could not update processing status in storage: {e}")
+        
         workspace = TemporaryDirectory(prefix="virology-processing-")
         integrity_errors = []
         batch_data = {}
