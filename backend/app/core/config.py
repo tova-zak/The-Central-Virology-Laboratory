@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     # Hard wall-clock ceiling for one batch; remaining pages are recorded as not processed.
     extraction_batch_deadline_seconds: int = Field(default=1800, ge=60, le=7200)
     # Gemini HTTP request timeout (also sent to the server as its processing deadline).
-    gemini_request_timeout_seconds: int = Field(default=60, ge=10, le=300)
+    gemini_request_timeout_seconds: int = Field(default=180, ge=10, le=300)
     # Page image sent to Gemini: longest side in pixels (0 = send the rendered PNG unchanged) and JPEG quality.
     gemini_image_max_dimension: int = Field(default=2048, ge=0, le=4096)
     gemini_image_jpeg_quality: int = Field(default=90, ge=50, le=100)
