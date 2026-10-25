@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     
     # Gemini API Configuration
     gemini_api_key: str = ""  # Primary key (optional if using numbered keys)
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"  # Free tier model (verified working)
     
     # Demo Mode (for testing without Gemini API calls)
     demo_mode: bool = False  # Set to true to use mock extractor
